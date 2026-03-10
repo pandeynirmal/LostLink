@@ -1,0 +1,78 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "C:\\Users\\Nirmal Pandey\\Desktop\\4-2 project\\backup\\project_submission\\submission_clean\\blockchain\\contracts\\LostAndFound.sol": {
+      "lastModificationDate": 1771255355311,
+      "contentHash": "abbbe479d99a61809bf4c82b10e28d11",
+      "sourceName": "contracts/LostAndFound.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.0"
+      ],
+      "artifacts": [
+        "LostAndFound"
+      ]
+    },
+    "C:\\Users\\Nirmal Pandey\\Desktop\\final year project\\trial\\project_submission\\with_admin_controls\\submission_final\\blockchain\\contracts\\LostAndFound.sol": {
+      "lastModificationDate": 1773076194315,
+      "contentHash": "53e68b65862e5426d3892acfac7bc057",
+      "sourceName": "contracts/LostAndFound.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.0"
+      ],
+      "artifacts": [
+        "LostAndFound"
+      ]
+    }
+  }
+}

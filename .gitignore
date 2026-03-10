@@ -1,0 +1,6 @@
+node_modules
+.next
+.qoder
+python_service/venv
+*.tsbuildinfo
+uploads

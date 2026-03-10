@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lost & Found AI + Blockchain</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .container { display: flex; gap: 20px; }
+        .section { flex: 1; border: 1px solid #ccc; padding: 20px; border-radius: 8px; }
+        input, button { display: block; width: 100%; margin: 10px 0; }
+        .result { margin-top: 10px; padding: 10px; background: #f0f0f0; }
+    </style>
+</head>
+<body>
+    <h1>Blockchain Lost & Found AI <span style="font-size:0.5em">Simple Integration</span></h1>
+    
+    <div class="container">
+        <!-- Section 1: Report Lost -->
+        <div class="section">
+            <h2>1. Report Lost Item</h2>
+            <form id="lostForm">
+                <input type="text" name="description" placeholder="Description (e.g. Red Backpack)" required>
+                <input type="file" name="image" required>
+                <button type="submit">Submit Lost Item</button>
+            </form>
+            <div id="lostResult" class="result"></div>
+        </div>
+
+        <!-- Section 2: Report Found -->
+        <div class="section">
+            <h2>2. Report Found Item</h2>
+            <form id="foundForm">
+                <input type="text" name="description" placeholder="Description (e.g. Red Backpack Found)" required>
+                <input type="file" name="image" required>
+                <button type="submit">Check match & Submit</button>
+            </form>
+            <div id="foundResult" class="result"></div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('lostForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            document.getElementById('lostResult').innerText = "Processing AI & Uploading...";
+            
+            try {
+                const res = await fetch('http://localhost:3000/report-lost', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                document.getElementById('lostResult').innerText = JSON.stringify(data, null, 2);
+            } catch (err) {
+                document.getElementById('lostResult').innerText = "Error: " + err.message;
+            }
+        };
+
+        document.getElementById('foundForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            document.getElementById('foundResult').innerText = "Analyzing & Checking Blockchain...";
+            
+            try {
+                const res = await fetch('http://localhost:3000/report-found', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                document.getElementById('foundResult').innerText = JSON.stringify(data, null, 2);
+            } catch (err) {
+                document.getElementById('foundResult').innerText = "Error: " + err.message;
+            }
+        };
+    </script>
+</body>
+</html>
