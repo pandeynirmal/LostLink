@@ -18,18 +18,15 @@ function isValidTxHash(hash: string | unknown): boolean {
 async function getUserIdFromCookie() {
   const cookieStore = await cookies();
   const token = cookieStore.get("token")?.value;
-
   if (!token) return null;
   const decoded = verifyToken(token);
   if (!decoded) return null;
-
   return decoded.userId;
 }
 
 export async function POST(request: NextRequest) {
   try {
     const userId = await getUserIdFromCookie();
-
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -104,7 +101,6 @@ export async function POST(request: NextRequest) {
       return score <= 1 ? score * 100 : score;
     };
 
-    // Backfill AI score if older requests stored 0/empty.
     let aiScore = Number(contactRequest.aiMatchScore || 0);
     if (!Number.isFinite(aiScore) || aiScore <= 0) {
       const linkedItem = await Item.findById(contactRequest.itemId)
@@ -133,39 +129,44 @@ export async function POST(request: NextRequest) {
     if (canAutoApprove) {
       const autoApprovalNote = `Auto-approved by AI threshold (${aiScore.toFixed(2)} >= ${autoApproveThreshold}).`;
 
-      const anchor = await anchorClaimDecision({
-        contactRequestId: contactRequest._id.toString(),
-        itemId: contactRequest.itemId.toString(),
-        ownerId: contactRequest.ownerId.toString(),
-        requesterId: contactRequest.requesterId.toString(),
-        aiMatchScore: aiScore,
-        adminId: "system-auto",
-        decision: "approved",
-        notes: autoApprovalNote,
-      });
+      let anchor = null;
+      try {
+        anchor = await anchorClaimDecision({
+          contactRequestId: contactRequest._id.toString(),
+          itemId: contactRequest.itemId.toString(),
+          ownerId: contactRequest.ownerId.toString(),
+          requesterId: contactRequest.requesterId.toString(),
+          aiMatchScore: aiScore,
+          adminId: "system-auto",
+          decision: "approved",
+          notes: autoApprovalNote,
+        });
+      } catch {
+        // Blockchain anchor unavailable — continue without it
+      }
 
       if (anchor?.txHash && isValidTxHash(anchor.txHash)) {
-        contactRequest.adminStatus = "approved";
-        contactRequest.adminReviewedAt = new Date();
-        contactRequest.adminReviewNotes = autoApprovalNote;
         contactRequest.adminDecisionTxHash = anchor.txHash;
-      } else {
-        contactRequest.adminStatus = "pending";
-        contactRequest.adminReviewNotes =
-          "Auto-approval skipped because blockchain anchoring failed. Requires manual admin review.";
       }
+
+      // Always approve regardless of blockchain availability
+      contactRequest.adminStatus = "approved";
+      contactRequest.adminReviewedAt = new Date();
+      contactRequest.adminReviewNotes = anchor?.txHash
+        ? autoApprovalNote
+        : autoApprovalNote + " (blockchain anchor unavailable)";
     }
 
     await contactRequest.save();
 
-    // Auto-create and assign escrow when claim is approved (if reward amount > 0)
     try {
-      const linkedItem = await Item.findById(contactRequest.itemId).select("rewardAmount userId description rewardPaymentMethod");
+      const linkedItem = await Item.findById(contactRequest.itemId).select(
+        "rewardAmount userId description rewardPaymentMethod"
+      );
       const rewardAmt = Number(linkedItem?.rewardAmount || 0);
       const isOffchain = linkedItem?.rewardPaymentMethod !== "onchain";
 
       if (rewardAmt > 0) {
-        // Check if active escrow already exists
         const existingEscrow = await EscrowCase.findOne({
           itemId: contactRequest.itemId,
           state: { $nin: ["released", "refunded"] },
@@ -173,25 +174,27 @@ export async function POST(request: NextRequest) {
 
         if (!existingEscrow) {
           if (isOffchain) {
-            // Check owner has enough off-chain balance to freeze the reward
             const owner = await User.findById(contactRequest.ownerId);
             if (!owner) throw new Error("Owner not found for escrow creation.");
 
             const ownerBalance = Number(owner.offchainBalance || 0);
             if (ownerBalance < rewardAmt) {
               return NextResponse.json(
-                { error: `Insufficient wallet balance. You have ${ownerBalance.toFixed(4)} ETH but the item reward is ${rewardAmt} ETH. Please load funds in your wallet before approving.` },
+                {
+                  error: `Insufficient wallet balance. You have ${ownerBalance.toFixed(4)} ETH but the item reward is ${rewardAmt} ETH. Please load funds in your wallet before approving.`,
+                },
                 { status: 400 }
               );
             }
 
-            // Deduct from owner's balance (funds are now "locked" in escrow)
-            await User.updateOne({ _id: owner._id }, { $inc: { offchainBalance: -rewardAmt } });
+            await User.updateOne(
+              { _id: owner._id },
+              { $inc: { offchainBalance: -rewardAmt } }
+            );
 
-            // Record the freeze transaction
             await WalletTransaction.create({
               fromUserId: owner._id,
-              toUserId: owner._id, // Locked to self (effectively escrow)
+              toUserId: owner._id,
               itemId: contactRequest.itemId,
               contactRequestId: contactRequest._id,
               paymentMethod: "offchain",
@@ -204,14 +207,13 @@ export async function POST(request: NextRequest) {
             });
           }
 
-          // Create escrow and immediately assign the finder
           await EscrowCase.create({
             itemId: contactRequest.itemId,
             ownerId: contactRequest.ownerId,
             finderId: contactRequest.requesterId,
             contactRequestId: contactRequest._id,
             amountEth: rewardAmt,
-            state: isOffchain ? "claim_assigned" : "funded", // if onchain, it stays 'funded' but requires a real tx
+            state: isOffchain ? "claim_assigned" : "funded",
             holdSource: isOffchain ? "project_wallet" : "external_escrow",
             paymentMethod: isOffchain ? "offchain" : "onchain",
             ownerItemReceived: false,
@@ -222,7 +224,6 @@ export async function POST(request: NextRequest) {
             autoReleaseTriggered: false,
           });
         } else if (!existingEscrow.finderId) {
-          // Escrow exists but no finder — assign now
           existingEscrow.finderId = contactRequest.requesterId;
           existingEscrow.contactRequestId = contactRequest._id;
           existingEscrow.state = "claim_assigned";
@@ -231,7 +232,6 @@ export async function POST(request: NextRequest) {
       }
     } catch (escrowErr) {
       console.error("Auto-escrow creation error:", escrowErr);
-      // If it's our manual balance error, re-throw it to be returned to user
       if ((escrowErr as any).status === 400) throw escrowErr;
     }
 
@@ -244,3 +244,4 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
+
