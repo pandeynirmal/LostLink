@@ -51,13 +51,11 @@ function countReleaseApprovals(escrow: any) {
 }
 
 async function executeEscrowRelease(escrow: any, providedTxHash?: string) {
-  // Re-fetch escrow fresh from DB to get latest state (prevents double-release)
   const freshEscrow = await EscrowCase.findById(escrow._id);
   if (!freshEscrow) throw new Error("Escrow not found.");
-  
-  // Double-check: if already released or funds already sent, skip gracefully
+
   if (freshEscrow.state === "released" || freshEscrow.finderFundReceived) {
-    console.log(`[executeEscrowRelease] Skipping - already released or funds sent. State: ${freshEscrow.state}, finderFundReceived: ${freshEscrow.finderFundReceived}`);
+    console.log(`[executeEscrowRelease] Skipping - already released. State: ${freshEscrow.state}`);
     return freshEscrow.releaseTxHash || providedTxHash || "already_completed";
   }
 
@@ -77,11 +75,8 @@ async function executeEscrowRelease(escrow: any, providedTxHash?: string) {
   const pseudoTxHash = providedTxHash || ("offchain_" + Date.now().toString(16));
   const isOffchain = freshEscrow.paymentMethod !== "onchain";
 
-  // If item already paid via Verify & Pay, skip the balance transfer but still mark escrow released
-  // Also guard against double-release using finderFundReceived flag
   if (!item.isClaimed && item.status !== "resolved" && !freshEscrow.finderFundReceived) {
     if (isOffchain) {
-      // Funds were deducted from owner at escrow creation — only credit finder now
       await User.updateOne({ _id: finder._id }, { $inc: { offchainBalance: amount } });
 
       await WalletTransaction.create({
@@ -124,12 +119,10 @@ async function executeEscrowRelease(escrow: any, providedTxHash?: string) {
   return freshEscrow.releaseTxHash;
 }
 
-// Helper to validate state transitions
 function canTransition(from: EscrowState, to: EscrowState): boolean {
   return VALID_STATE_TRANSITIONS[from]?.includes(to) || false;
 }
 
-// Helper to set auto-release timer
 function setAutoReleaseTimer(escrow: any) {
   if (!escrow.autoReleaseAt && escrow.ownerItemReceived) {
     escrow.autoReleaseAt = new Date(Date.now() + AUTO_RELEASE_DELAY_MS);
@@ -159,7 +152,6 @@ export async function POST(request: NextRequest) {
       disputeReason = "",
       refundTxHash = "",
       releaseTxHash = "",
-      // Layer 2: Delivery params
       deliveryMethod = "",
       deliveryTrackingId = "",
       deliveryNotes = "",
@@ -184,14 +176,33 @@ export async function POST(request: NextRequest) {
 
     let escrow = await EscrowCase.findOne({ itemId: item._id }).sort({ createdAt: -1 });
 
-    // Create escrow action - must be before the "no escrow" check
+    // ── CREATE ESCROW ──────────────────────────────────────────────────────────
     if (action === "create_escrow") {
       if (!isOwner && !isAdmin) {
         return NextResponse.json({ error: "Only owner/admin can create escrow." }, { status: 403 });
       }
-      
+
+      // If an active escrow already exists, return it (prevent duplicates)
       if (escrow && !["released", "refunded"].includes(escrow.state)) {
-        return NextResponse.json({ error: "Active escrow already exists." }, { status: 400 });
+        // If it's missing a finder, try to assign one now from approved contact requests
+        if (!escrow.finderId) {
+          const linkedRequest = await ContactRequest.findOne({
+            itemId: item._id,
+            status: "approved",
+          }).sort({ createdAt: -1 });
+
+          if (linkedRequest?.requesterId) {
+            escrow.finderId = linkedRequest.requesterId;
+            escrow.contactRequestId = linkedRequest._id;
+            escrow.state = "claim_assigned";
+            await escrow.save();
+          }
+        }
+        return NextResponse.json({
+          success: true,
+          escrowId: escrow._id,
+          message: "Escrow already exists.",
+        });
       }
 
       const amount = Number(item.rewardAmount || 0);
@@ -202,7 +213,6 @@ export async function POST(request: NextRequest) {
       const isOffchain = paymentMethod !== "onchain";
 
       if (isOffchain) {
-        // Check owner has enough off-chain balance
         const owner = await User.findById(item.userId);
         if (!owner) return NextResponse.json({ error: "Owner not found." }, { status: 400 });
         const ownerBalance = Number(owner.offchainBalance || 0);
@@ -212,14 +222,10 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-
-        // Deduct from owner's balance when creating escrow (funds are now "locked")
         await User.updateOne({ _id: owner._id }, { $inc: { offchainBalance: -amount } });
-
-        // Record the freeze transaction
         await WalletTransaction.create({
           fromUserId: owner._id,
-          toUserId: owner._id, // Locked to self (effectively escrow)
+          toUserId: owner._id,
           itemId: item._id,
           paymentMethod: "offchain",
           fromAddress: "internal",
@@ -231,11 +237,19 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // Auto-assign finder from approved contact request if available
+      const linkedRequest = await ContactRequest.findOne({
+        itemId: item._id,
+        status: "approved",
+      }).sort({ createdAt: -1 });
+
       const newEscrow = await EscrowCase.create({
         itemId: item._id,
         ownerId: item.userId,
+        finderId: linkedRequest?.requesterId || undefined,
+        contactRequestId: linkedRequest?._id || undefined,
         amountEth: amount,
-        state: isOffchain ? "funded" : "funded", // stays funded but holdSource differs
+        state: linkedRequest?.requesterId ? "claim_assigned" : "funded",
         holdSource: isOffchain ? "project_wallet" : "external_escrow",
         paymentMethod: isOffchain ? "offchain" : "onchain",
         ownerItemReceived: false,
@@ -246,10 +260,10 @@ export async function POST(request: NextRequest) {
         autoReleaseTriggered: false,
       });
 
-      return NextResponse.json({ 
-        success: true, 
+      return NextResponse.json({
+        success: true,
         escrowId: newEscrow._id,
-        message: "Escrow created successfully."
+        message: "Escrow created successfully.",
       });
     }
 
@@ -264,6 +278,7 @@ export async function POST(request: NextRequest) {
     const finderUserId = escrow.finderId?.toString() || "";
     const isFinder = finderUserId === userId;
 
+    // ── ALLOW CHAT ─────────────────────────────────────────────────────────────
     if (action === "allow_chat") {
       if (!isOwner && !isFinder && !isAdmin) {
         return NextResponse.json({ error: "Not allowed" }, { status: 403 });
@@ -288,7 +303,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, conversationId: conversation._id });
     }
 
-    // Layer 1 -> Layer 2: Assign Finder
+    // ── ASSIGN FINDER ──────────────────────────────────────────────────────────
     if (action === "assign_finder") {
       if (!isOwner && !isAdmin) {
         return NextResponse.json({ error: "Only owner/admin can assign finder." }, { status: 403 });
@@ -325,13 +340,12 @@ export async function POST(request: NextRequest) {
       escrow.state = "claim_assigned";
       await escrow.save();
 
-      // Send notification
       void notifyFinderAssigned(escrow);
 
       return NextResponse.json({ success: true, escrow, message: "Finder assigned to escrow." });
     }
 
-    // claim_assigned -> awaiting_delivery: Owner notifies finder to start delivery
+    // ── PROCEED TO DELIVERY ────────────────────────────────────────────────────
     if (action === "proceed_to_delivery") {
       if (!isOwner && !isAdmin) {
         return NextResponse.json({ error: "Only owner/admin can proceed to delivery." }, { status: 403 });
@@ -346,19 +360,17 @@ export async function POST(request: NextRequest) {
       escrow.state = "awaiting_delivery";
       await escrow.save();
 
-      // Notify finder to begin delivery
       void notifyDeliveryInitiated(escrow);
 
       return NextResponse.json({ success: true, escrow, message: "Finder notified to begin delivery." });
     }
 
-    // Layer 2: Finder initiates delivery
+    // ── INITIATE DELIVERY ──────────────────────────────────────────────────────
     if (action === "initiate_delivery") {
       if (!isFinder && !isAdmin) {
         return NextResponse.json({ error: "Only finder/admin can initiate delivery." }, { status: 403 });
       }
 
-      // Allow updating delivery info when already in awaiting_delivery, or transition from claim_assigned
       if (escrow.state !== "awaiting_delivery" && !canTransition(escrow.state, "awaiting_delivery")) {
         return NextResponse.json(
           { error: `Cannot initiate delivery from state: ${escrow.state}` },
@@ -375,13 +387,12 @@ export async function POST(request: NextRequest) {
       }
       await escrow.save();
 
-      // Send notification
       void notifyDeliveryInitiated(escrow);
 
       return NextResponse.json({ success: true, escrow, message: "Delivery initiated." });
     }
 
-    // Layer 2: Finder marks item delivered
+    // ── MARK ITEM DELIVERED ────────────────────────────────────────────────────
     if (action === "mark_item_delivered") {
       if (!isFinder && !isAdmin) {
         return NextResponse.json({ error: "Only finder/admin can mark item delivered." }, { status: 403 });
@@ -399,7 +410,6 @@ export async function POST(request: NextRequest) {
       escrow.itemDeliveredBy = userId as any;
       await escrow.save();
 
-      // Send notification
       void notifyItemDelivered(escrow);
 
       return NextResponse.json({ success: true, escrow, message: "Item marked as delivered." });
@@ -409,7 +419,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Not allowed for this escrow." }, { status: 403 });
     }
 
-    // Layer 2: Owner confirms item received
+    // ── CONFIRM ITEM RECEIVED ──────────────────────────────────────────────────
     if (action === "confirm_item_received") {
       if (!isOwner && !isAdmin) {
         return NextResponse.json({ error: "Only owner/admin can confirm item received." }, { status: 403 });
@@ -418,48 +428,44 @@ export async function POST(request: NextRequest) {
       if (!escrow.ownerItemReceived) {
         escrow.ownerItemReceived = true;
         escrow.ownerItemReceivedAt = new Date();
-        
-        // Transition state if needed
+
         if (escrow.state === "item_delivered") {
           escrow.state = "awaiting_confirmation";
         }
-        
-        // Set auto-release timer
+
         setAutoReleaseTimer(escrow);
-        
         await escrow.save();
-        
-        // Send notification
+
         void notifyItemReceived(escrow);
       }
-      
-      return NextResponse.json({ 
-        success: true, 
+
+      return NextResponse.json({
+        success: true,
         escrow,
         autoReleaseAt: escrow.autoReleaseAt,
-        message: "Item receipt confirmed. Auto-release scheduled." 
+        message: "Item receipt confirmed. Auto-release scheduled.",
       });
     }
 
-    // Layer 2: Finder confirms fund receipt (optional)
+    // ── CONFIRM FUND RECEIVED ──────────────────────────────────────────────────
     if (action === "confirm_fund_received") {
       if (!isFinder && !isAdmin) {
         return NextResponse.json({ error: "Only finder/admin can confirm fund received." }, { status: 403 });
       }
-      
+
       if (!escrow.finderFundReceived) {
         escrow.finderFundReceived = true;
         escrow.finderFundReceivedAt = new Date();
         await escrow.save();
       }
-      
+
       return NextResponse.json({ success: true, escrow });
     }
 
-    // Layer 3: Multi-sig release approval (2-of-3)
+    // ── APPROVE RELEASE ────────────────────────────────────────────────────────
     if (action === "approve_release") {
       const now = new Date();
-      
+
       if (isOwner && !escrow.ownerReleaseApproved) {
         escrow.ownerReleaseApproved = true;
         escrow.ownerReleaseApprovedAt = now;
@@ -476,21 +482,17 @@ export async function POST(request: NextRequest) {
       await escrow.save();
 
       const releaseVotes = countReleaseApprovals(escrow);
-      
-      // Send notification for approval
+
       void notifyReleaseApproved(escrow, releaseVotes);
-      
-      // Release immediately if both owner AND finder approved (mutual agreement = instant release)
-      // OR if 2-of-3 any combination with owner confirmed receipt
+
       const bothPartiesAgreed = escrow.ownerReleaseApproved && escrow.finderReleaseApproved;
       const multiSigReady = escrow.ownerItemReceived && releaseVotes >= 2;
 
       if ((bothPartiesAgreed || multiSigReady) && escrow.state !== "released") {
         const txHash = await executeEscrowRelease(escrow, releaseTxHash);
-        
-        // Send release notification
+
         void notifyEscrowReleased(escrow, txHash);
-        
+
         return NextResponse.json({
           success: true,
           released: true,
@@ -507,19 +509,19 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Layer 3: Trigger auto-release after time-lock
+    // ── TRIGGER AUTO-RELEASE ───────────────────────────────────────────────────
     if (action === "trigger_auto_release") {
       if (!escrow.ownerItemReceived) {
         return NextResponse.json({ error: "Owner must confirm receipt first." }, { status: 400 });
       }
-      
+
       if (!escrow.autoReleaseAt || Date.now() < escrow.autoReleaseAt.getTime()) {
-        return NextResponse.json({ 
+        return NextResponse.json({
           error: "Auto-release time not reached yet.",
-          autoReleaseAt: escrow.autoReleaseAt 
+          autoReleaseAt: escrow.autoReleaseAt,
         }, { status: 400 });
       }
-      
+
       if (escrow.autoReleaseTriggered) {
         return NextResponse.json({ error: "Auto-release already triggered." }, { status: 400 });
       }
@@ -528,10 +530,9 @@ export async function POST(request: NextRequest) {
       await escrow.save();
 
       const txHash = await executeEscrowRelease(escrow);
-      
-      // Send release notification
+
       void notifyEscrowReleased(escrow, txHash);
-      
+
       return NextResponse.json({
         success: true,
         released: true,
@@ -540,7 +541,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Layer 3: Raise dispute
+    // ── RAISE DISPUTE ──────────────────────────────────────────────────────────
     if (action === "raise_dispute") {
       if (!isOwner && !isFinder && !isAdmin) {
         return NextResponse.json({ error: "Only owner, finder, or admin can raise dispute." }, { status: 403 });
@@ -558,18 +559,17 @@ export async function POST(request: NextRequest) {
       escrow.disputeRaisedBy = userId as any;
       escrow.disputeRaisedAt = new Date();
       await escrow.save();
-      
-      // Send notification
+
       void notifyDisputeRaised(escrow);
-      
-      return NextResponse.json({ 
-        success: true, 
-        escrow, 
-        message: "Dispute raised. Admin intervention required." 
+
+      return NextResponse.json({
+        success: true,
+        escrow,
+        message: "Dispute raised. Admin intervention required.",
       });
     }
 
-    // Layer 3: Resolve dispute with refund to owner
+    // ── RESOLVE DISPUTE: REFUND ────────────────────────────────────────────────
     if (action === "resolve_dispute_refund") {
       if (!isAdmin) {
         return NextResponse.json({ error: "Only admin can resolve dispute with refund." }, { status: 403 });
@@ -577,12 +577,10 @@ export async function POST(request: NextRequest) {
 
       const amount = Number(escrow.amountEth || 0);
       if (amount > 0) {
-        // Refund back to owner's off-chain balance
         await User.updateOne({ _id: escrow.ownerId }, { $inc: { offchainBalance: amount } });
 
-        // Record the refund transaction
         await WalletTransaction.create({
-          fromUserId: userId as any, // Admin/System
+          fromUserId: userId as any,
           toUserId: escrow.ownerId,
           itemId: item._id,
           contactRequestId: escrow.contactRequestId || undefined,
@@ -595,54 +593,52 @@ export async function POST(request: NextRequest) {
           status: "completed",
         });
       }
-      
+
       escrow.state = "refunded";
       escrow.disputeResolution = "refund_to_owner";
       escrow.disputeResolvedAt = new Date();
       escrow.refundTxHash = refundTxHash || undefined;
       escrow.refundedAt = new Date();
       await escrow.save();
-      
-      // Send notification
+
       void notifyEscrowRefunded(escrow, refundTxHash);
       void notifyDisputeResolved(escrow, "refund_to_owner", refundTxHash);
-      
-      return NextResponse.json({ 
-        success: true, 
-        escrow, 
-        message: "Dispute resolved: Funds refunded to owner." 
+
+      return NextResponse.json({
+        success: true,
+        escrow,
+        message: "Dispute resolved: Funds refunded to owner.",
       });
     }
 
-    // Layer 3: Resolve dispute with release to finder
+    // ── RESOLVE DISPUTE: RELEASE ───────────────────────────────────────────────
     if (action === "resolve_dispute_release") {
       if (!isAdmin) {
         return NextResponse.json({ error: "Only admin can resolve dispute with release." }, { status: 403 });
       }
-      
+
       escrow.adminReleaseApproved = true;
       escrow.adminReleaseApprovedAt = new Date();
       escrow.disputeResolution = "release_to_finder";
       escrow.disputeResolvedAt = new Date();
-      
+
       if (!escrow.ownerItemReceived) {
         escrow.ownerItemReceived = true;
         escrow.ownerItemReceivedAt = new Date();
       }
-      
+
       await escrow.save();
-      
+
       const txHash = await executeEscrowRelease(escrow);
-      
-      // Send notification
+
       void notifyEscrowReleased(escrow, txHash);
       void notifyDisputeResolved(escrow, "release_to_finder", txHash);
-      
-      return NextResponse.json({ 
-        success: true, 
-        released: true, 
-        txHash, 
-        message: "Dispute resolved: Funds released to finder." 
+
+      return NextResponse.json({
+        success: true,
+        released: true,
+        txHash,
+        message: "Dispute resolved: Funds released to finder.",
       });
     }
 
