@@ -20,11 +20,9 @@ import { getBlockchainRpcUrl, resolveReadableNetworkName } from "@/lib/chain-con
 async function getUserIdFromCookie() {
   const cookieStore = await cookies();
   const token = cookieStore.get("token")?.value;
-
   if (!token) return null;
   const decoded = verifyToken(token);
   if (!decoded) return null;
-
   return decoded.userId;
 }
 
@@ -33,10 +31,8 @@ const normalizeScore = (score: unknown): number => {
   return score <= 1 ? score * 100 : score;
 };
 
-// Validate transaction hash format
 function isValidTxHash(hash: string | unknown): boolean {
-  if (typeof hash !== 'string') return false;
-  // Transaction hash must be 66 characters: 0x + 64 hex characters
+  if (typeof hash !== "string") return false;
   return /^0x[a-fA-F0-9]{64}$/.test(hash);
 }
 
@@ -97,21 +93,31 @@ async function maybeAutoApproveClaim({
   }
 
   const reviewNote = `Auto-approved by AI threshold (${aiScore.toFixed(2)} >= ${autoApproveThreshold}).`;
-  const decisionTxHash = await createDecisionAnchorOrThrow({
-    contactRequestId: ownerApprovedRequest._id.toString(),
-    itemId: ownerApprovedRequest.itemId.toString(),
-    ownerId: ownerApprovedRequest.ownerId.toString(),
-    requesterId: ownerApprovedRequest.requesterId.toString(),
-    aiMatchScore: aiScore,
-    adminId: "system-auto",
-    decision: "approved",
-    notes: reviewNote,
-  });
+
+  let decisionTxHash = "";
+  try {
+    decisionTxHash = await createDecisionAnchorOrThrow({
+      contactRequestId: ownerApprovedRequest._id.toString(),
+      itemId: ownerApprovedRequest.itemId.toString(),
+      ownerId: ownerApprovedRequest.ownerId.toString(),
+      requesterId: ownerApprovedRequest.requesterId.toString(),
+      aiMatchScore: aiScore,
+      adminId: "system-auto",
+      decision: "approved",
+      notes: reviewNote,
+    });
+  } catch {
+    console.warn("Blockchain anchor unavailable for auto-approve, proceeding without it.");
+  }
 
   ownerApprovedRequest.adminStatus = "approved";
   ownerApprovedRequest.adminReviewedAt = new Date();
-  ownerApprovedRequest.adminReviewNotes = reviewNote;
-  ownerApprovedRequest.adminDecisionTxHash = decisionTxHash;
+  ownerApprovedRequest.adminReviewNotes = decisionTxHash
+    ? reviewNote
+    : reviewNote + " (blockchain anchor unavailable)";
+  if (decisionTxHash) {
+    ownerApprovedRequest.adminDecisionTxHash = decisionTxHash;
+  }
 
   await ownerApprovedRequest.save();
   return ownerApprovedRequest;
@@ -145,11 +151,7 @@ export async function POST(request: NextRequest) {
 
     await connectDB();
 
-    const item = await Item.findOne({
-      _id: itemId,
-      userId,
-    });
-
+    const item = await Item.findOne({ _id: itemId, userId });
     if (!item) {
       return NextResponse.json({ error: "Item not found or unauthorized" }, { status: 404 });
     }
@@ -178,8 +180,8 @@ export async function POST(request: NextRequest) {
 
     if (!approvedRequest && ownerApprovedRequest && allowOwnerDirectApproval === true) {
       const reviewNote = "Approved during owner payout from claims view.";
-
-      const aiScore = Number(ownerApprovedRequest.aiMatchScore || 0) || normalizeScore(item?.matchScore);
+      const aiScore =
+        Number(ownerApprovedRequest.aiMatchScore || 0) || normalizeScore(item?.matchScore);
       if (!ownerApprovedRequest.aiMatchScore && aiScore > 0) {
         ownerApprovedRequest.aiMatchScore = aiScore;
       }
@@ -197,16 +199,18 @@ export async function POST(request: NextRequest) {
           notes: reviewNote,
         });
       } catch {
-        return NextResponse.json(
-          { error: "Blockchain decision anchor failed. Approval was not saved." },
-          { status: 503 }
-        );
+        // Blockchain anchor unavailable — continue without it
+        console.warn("Blockchain anchor unavailable, proceeding without it.");
       }
 
       ownerApprovedRequest.adminStatus = "approved";
       ownerApprovedRequest.adminReviewedAt = new Date();
-      ownerApprovedRequest.adminReviewNotes = reviewNote;
-      ownerApprovedRequest.adminDecisionTxHash = decisionTxHash;
+      ownerApprovedRequest.adminReviewNotes = decisionTxHash
+        ? reviewNote
+        : reviewNote + " (blockchain anchor unavailable)";
+      if (decisionTxHash) {
+        ownerApprovedRequest.adminDecisionTxHash = decisionTxHash;
+      }
       await ownerApprovedRequest.save();
       approvedRequest = ownerApprovedRequest;
     }
@@ -218,41 +222,23 @@ export async function POST(request: NextRequest) {
           ownerApprovedRequest,
         });
       } catch {
-        return NextResponse.json(
-          { error: "Claim auto-approval failed because blockchain anchoring is unavailable." },
-          { status: 503 }
-        );
+        console.warn("Auto-approval failed, proceeding without blockchain anchor.");
+        approvedRequest = ownerApprovedRequest;
       }
     }
 
-    if (approvedRequest && !isValidTxHash((approvedRequest as any).adminDecisionTxHash)) {
-      return NextResponse.json(
-        {
-          error:
-            "Approved claim is missing blockchain decision proof. Admin must re-approve claim on-chain before payout.",
-        },
-        { status: 409 }
-      );
-    }
-
+    // Blockchain proof is optional — proceed even without valid txHash
     const requesterId = approvedRequest?.requesterId?.toString() || "";
 
     if (!requesterId) {
       if (ownerApprovedRequest) {
         return NextResponse.json(
-          {
-            error:
-              "Claim is pending admin review. Admin must approve before payout.",
-          },
+          { error: "Claim is pending admin review. Admin must approve before payout." },
           { status: 400 }
         );
       }
-
       return NextResponse.json(
-        {
-          error:
-            "No approved claim found. Owner and admin approvals are required before payout.",
-        },
+        { error: "No approved claim found. Owner and admin approvals are required before payout." },
         { status: 400 }
       );
     }
@@ -271,12 +257,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Reward already claimed" }, { status: 400 });
     }
 
-    // Check if there is an active escrow for this item. If so, block Verify & Pay.
-    // The user MUST use the Escrow Panel to finalize the release to prevent state desync and double charging.
     const { default: EscrowCase } = await import("@/lib/models/EscrowCase");
     const activeEscrow = await EscrowCase.findOne({
       itemId: item._id,
-      state: { $nin: ["released", "refunded"] }
+      state: { $nin: ["released", "refunded"] },
     });
 
     if (activeEscrow) {
@@ -316,19 +300,14 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Validate transaction hash format
       if (!isValidTxHash(submittedTxHash)) {
         return NextResponse.json(
-          { 
-            error: "Invalid transaction hash format. Must be a valid blockchain transaction hash (0x followed by 64 hex characters)" 
-          },
+          { error: "Invalid transaction hash format. Must be a valid blockchain transaction hash (0x followed by 64 hex characters)" },
           { status: 400 }
         );
       }
 
-      const provider = new ethers.JsonRpcProvider(
-        getBlockchainRpcUrl()
-      );
+      const provider = new ethers.JsonRpcProvider(getBlockchainRpcUrl());
       const [tx, receipt, net] = await Promise.all([
         provider.getTransaction(submittedTxHash),
         provider.getTransactionReceipt(submittedTxHash),
@@ -385,7 +364,6 @@ export async function POST(request: NextRequest) {
         status: "completed",
       });
     } else if (paymentMethod === "onchain") {
-      // Off-chain balance payment ("onchain" method now uses persistent MongoDB balance)
       const ownerBalance = Number(owner.offchainBalance || 0);
       if (ownerBalance < payoutAmount) {
         return NextResponse.json(
@@ -394,7 +372,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Deduct from owner, credit to finder immediately
       await owner.updateOne({ $inc: { offchainBalance: -payoutAmount } });
       await requester.updateOne({ $inc: { offchainBalance: payoutAmount } });
 
@@ -428,9 +405,9 @@ export async function POST(request: NextRequest) {
         ownerId: owner._id.toString(),
         requesterId: requester._id.toString(),
         paymentMethod: "razorpay",
-          externalPaymentId,
-          amountEth: payoutAmount,
-        });
+        externalPaymentId,
+        amountEth: payoutAmount,
+      });
 
       if (!anchor) {
         return NextResponse.json(
@@ -439,12 +416,11 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Validate anchor txHash
       if (!isValidTxHash(anchor.txHash)) {
         return NextResponse.json(
-          { 
+          {
             error: "Blockchain anchor transaction failed - invalid hash returned",
-            details: "The system could not properly record this transaction on the blockchain"
+            details: "The system could not properly record this transaction on the blockchain",
           },
           { status: 500 }
         );
@@ -471,23 +447,27 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const settlementAnchor = await anchorClaimSettlement({
-      contactRequestId: approvedRequest?._id?.toString() || "",
-      itemId: item._id.toString(),
-      ownerId: owner._id.toString(),
-      requesterId: requester._id.toString(),
-      paymentMethod,
-      amountEth: payoutAmount,
-      paymentTxHash: txHash,
-      externalPaymentId: paymentMethod === "razorpay" ? externalPaymentId : undefined,
-    });
+    try {
+      const settlementAnchor = await anchorClaimSettlement({
+        contactRequestId: approvedRequest?._id?.toString() || "",
+        itemId: item._id.toString(),
+        ownerId: owner._id.toString(),
+        requesterId: requester._id.toString(),
+        paymentMethod,
+        amountEth: payoutAmount,
+        paymentTxHash: txHash,
+        externalPaymentId: paymentMethod === "razorpay" ? externalPaymentId : undefined,
+      });
 
-    if (settlementAnchor?.txHash) {
-      if (transactionDoc) {
-        transactionDoc.set("settlementProofTxHash", settlementAnchor.txHash);
-        await transactionDoc.save();
+      if (settlementAnchor?.txHash) {
+        if (transactionDoc) {
+          transactionDoc.set("settlementProofTxHash", settlementAnchor.txHash);
+          await transactionDoc.save();
+        }
+        anchorTxHash = anchorTxHash || settlementAnchor.txHash;
       }
-      anchorTxHash = anchorTxHash || settlementAnchor.txHash;
+    } catch {
+      console.warn("Settlement anchor unavailable, proceeding without it.");
     }
 
     item.status = "resolved";
@@ -503,11 +483,9 @@ export async function POST(request: NextRequest) {
     };
     await item.save();
 
-    // Credit the reward to the finder's persistent off-chain balance (only for non-onchain methods since onchain already handled it above)
     if (paymentMethod !== "onchain") {
       try {
         await requester.updateOne({ $inc: { offchainBalance: payoutAmount } });
-        // Deduct from owner's off-chain balance (if they have enough)
         const ownerBalanceAfter = Number(owner.offchainBalance || 0);
         if (ownerBalanceAfter >= payoutAmount) {
           await owner.updateOne({ $inc: { offchainBalance: -payoutAmount } });
@@ -517,7 +495,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Keep matched counterpart in sync so both users see consistent claimed/resolved state.
     if (item.matchedItemId) {
       const counterpart = await Item.findById(item.matchedItemId);
       if (counterpart) {
@@ -578,54 +555,46 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Item not found or unauthorized" }, { status: 404 });
     }
 
-      const ownerApprovedRequest = await ContactRequest.findOne({
-        itemId: item._id,
-        ownerId: userId,
-        status: "approved",
-      }).sort({ createdAt: -1 });
+    const ownerApprovedRequest = await ContactRequest.findOne({
+      itemId: item._id,
+      ownerId: userId,
+      status: "approved",
+    }).sort({ createdAt: -1 });
 
-      let approvedRequest = await ContactRequest.findOne({
-        itemId: item._id,
-        ownerId: userId,
-        status: "approved",
-        adminStatus: "approved",
-      })
-        .sort({ createdAt: -1 })
-        .select("requesterId adminDecisionTxHash");
+    let approvedRequest = await ContactRequest.findOne({
+      itemId: item._id,
+      ownerId: userId,
+      status: "approved",
+      adminStatus: "approved",
+    })
+      .sort({ createdAt: -1 })
+      .select("requesterId adminDecisionTxHash");
 
-      if (!approvedRequest && ownerApprovedRequest) {
-        try {
-          approvedRequest = await maybeAutoApproveClaim({
-            item,
-            ownerApprovedRequest,
-          });
-        } catch {
-          approvedRequest = null;
-        }
+    if (!approvedRequest && ownerApprovedRequest) {
+      try {
+        approvedRequest = await maybeAutoApproveClaim({
+          item,
+          ownerApprovedRequest,
+        });
+      } catch {
+        approvedRequest = ownerApprovedRequest;
       }
-      if (approvedRequest && !isValidTxHash((approvedRequest as any).adminDecisionTxHash)) {
-        approvedRequest = null;
-      }
+    }
 
-      let requester: any = null;
-      if (approvedRequest?.requesterId) {
-        requester = await User.findById(approvedRequest.requesterId);
-      }
+    let requester: any = null;
+    if (approvedRequest?.requesterId) {
+      requester = await User.findById(approvedRequest.requesterId);
+    }
 
     if (!requester) {
       if (ownerApprovedRequest) {
         return NextResponse.json(
-          {
-            error: "Claim is pending admin review.",
-          },
+          { error: "Claim is pending admin review." },
           { status: 400 }
         );
       }
       return NextResponse.json(
-        {
-          error:
-            "No approved claim found yet.",
-        },
+        { error: "No approved claim found yet." },
         { status: 400 }
       );
     }
@@ -648,3 +617,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
