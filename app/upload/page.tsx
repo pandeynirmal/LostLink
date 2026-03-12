@@ -1,356 +1,331 @@
-import { NextRequest, NextResponse } from "next/server";
-import connectDB from "@/lib/db";
-import Item from "@/lib/models/Item";
-import { cookies } from "next/headers";
-import { verifyToken } from "@/lib/auth";
-import { v2 as cloudinary } from "cloudinary";
+"use client";
 
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Navbar } from "@/components/navbar";
+import { UploadForm } from "@/components/upload-form";
+import Loading from "./loading"; // Import the new Loading component
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { CheckCircle2, Clock, Search, Eye } from "lucide-react";
+import Image from "next/image";
+import Link from "next/link";
 
-// Helper: Upload buffer to Cloudinary
-async function uploadToCloudinary(buffer: Buffer, filename: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        folder: "lostlink",
-        public_id: `${Date.now()}-${filename.replace(/\.[^/.]+$/, "")}`,
-        resource_type: "image",
-      },
-      (error, result) => {
-        if (error) reject(error);
-        else resolve(result!.secure_url);
+// Auth guard hook
+function useAuthGuard() {
+  const router = useRouter()
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const res = await fetch('/api/auth/me', {
+          credentials: 'include'
+        })
+
+        if (!res.ok) {
+          router.push('/signin')
+          return
+        }
+
+        setIsAuthenticated(true)
+      } catch {
+        router.push('/signin')
       }
-    );
-    stream.end(buffer);
-  });
+    }
+
+    checkAuth()
+  }, [router])
+
+  return isAuthenticated
 }
 
-export async function POST(request: NextRequest) {
+// Mock API function for backend integration
+async function analyzeImage(file: File, itemType: string) {
+  // In production, replace with actual API endpoint
+  const apiUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get("token")?.value;
+    const formData = new FormData();
+    formData.append("image", file);
+    formData.append("itemType", itemType);
 
-    if (!token) {
-      return NextResponse.json(
-        { error: "Unauthorized. Please login first." },
-        { status: 401 }
-      );
-    }
-
-    const decoded = verifyToken(token);
-    if (!decoded) {
-      return NextResponse.json(
-        { error: "Invalid token." },
-        { status: 401 }
-      );
-    }
-
-    const userId = decoded.userId;
-
-    const formData = await request.formData();
-
-    const image = formData.get("image") as File;
-    const description = formData.get("description") as string;
-    const itemType = formData.get("type") as "lost" | "found";
-    const rawRewardAmount = formData.get("rewardAmount");
-    const parsedRewardAmount =
-      typeof rawRewardAmount === "string" && rawRewardAmount.trim() !== ""
-        ? Number(rawRewardAmount)
-        : 0;
-    const rewardAmount = Number.isFinite(parsedRewardAmount) ? parsedRewardAmount : 0;
-    const rawContactPhone = formData.get("contactPhone");
-    const contactPhone =
-      typeof rawContactPhone === "string" ? rawContactPhone.trim() : "";
-    const rewardPaymentMethod =
-      (formData.get("rewardPaymentMethod") as "offchain" | "onchain") || "offchain";
-    const latitude = parseFloat(formData.get("latitude") as string);
-    const longitude = parseFloat(formData.get("longitude") as string);
-
-    if (!image || !description || !itemType) {
-      return NextResponse.json(
-        { error: "Missing required fields: image, description, and type" },
-        { status: 400 }
-      );
-    }
-
-    if (!["lost", "found"].includes(itemType)) {
-      return NextResponse.json(
-        { error: 'Invalid type. Must be "lost" or "found"' },
-        { status: 400 }
-      );
-    }
-
-    if (rewardAmount < 0) {
-      return NextResponse.json(
-        { error: "Reward amount must be greater than or equal to 0" },
-        { status: 400 }
-      );
-    }
-
-    if (itemType === "lost" && contactPhone) {
-      const phonePattern = /^[+\d][\d\s-]{7,19}$/;
-      if (!phonePattern.test(contactPhone)) {
-        return NextResponse.json(
-          { error: "Enter a valid mobile number." },
-          { status: 400 }
-        );
-      }
-    }
-
-    await connectDB();
-
-    // Upload image to Cloudinary
-    const bytes = await image.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    let imageUrl = "";
-
-    try {
-      imageUrl = await uploadToCloudinary(buffer, image.name);
-      console.log("Image uploaded to Cloudinary:", imageUrl);
-    } catch (error) {
-      console.error("Cloudinary upload failed:", error);
-      return NextResponse.json(
-        { error: "Image upload failed", details: (error as Error).message },
-        { status: 500 }
-      );
-    }
-
-    // Try AI embedding (skip if Python service not available)
-    let embedding: number[] = [];
-    let detectedItem = description.split(" ")[0] || "Item";
-
-    try {
-      const { getEmbedding } = await import("@/lib/ai-service");
-      embedding = await getEmbedding(buffer, image.name);
-      console.log("AI embedding generated successfully");
-    } catch (error) {
-      console.warn("AI service unavailable, skipping embedding:", (error as Error).message);
-    }
-
-    // Prevent duplicate uploads by same user (only if embedding available)
-    if (embedding.length > 0) {
-      const myExistingItems = await Item.find({
-        userId: userId,
-        status: { $ne: "resolved" },
-        removedByAdmin: { $ne: true },
-      });
-
-      for (const existing of myExistingItems) {
-        if (!existing.embedding?.length) continue;
-        try {
-          const { getMatchScore } = await import("@/lib/ai-service");
-          const matchResult = await getMatchScore(existing.embedding, embedding);
-          if (matchResult.match_score >= 0.95) {
-            const sameType = existing.type === itemType;
-            return NextResponse.json(
-              {
-                error: sameType
-                  ? `You have already uploaded this item as ${itemType}.`
-                  : `You have already uploaded this item as ${existing.type}.`,
-                existingItemId: existing._id,
-                details: "Duplicate detection prevented this upload.",
-              },
-              { status: 409 }
-            );
-          }
-        } catch {
-          // Skip duplicate check if AI unavailable
-        }
-      }
-    }
-
-    // Create item in MongoDB
-    const newItem = await Item.create({
-      type: itemType,
-      description,
-      imageUrl,
-      embedding,
-      userId,
-      status: "pending",
-      rewardAmount: itemType === "lost" ? rewardAmount : 0,
-      rewardPaymentMethod: itemType === "lost" ? rewardPaymentMethod : "offchain",
-      contactPhone: itemType === "lost" ? contactPhone : "",
-      latitude: !isNaN(latitude) ? latitude : undefined,
-      longitude: !isNaN(longitude) ? longitude : undefined,
+    const response = await fetch(`${apiUrl}/upload`, {
+      method: "POST",
+      body: formData,
     });
 
-    console.log("Item saved:", newItem._id);
-
-    // Try blockchain registration (skip if not available)
-    if (itemType === "lost") {
-      try {
-        const { registerItem } = await import("@/lib/blockchain");
-        const mockCid = `Qm${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
-        const metadataURI = `ipfs://${mockCid}`;
-
-        const blockchainData = await registerItem(
-          newItem._id.toString(),
-          itemType,
-          `QR-${newItem._id.toString().substring(0, 8)}`,
-          latitude || 0,
-          longitude || 0,
-          description.substring(0, 32),
-          rewardAmount,
-          metadataURI
-        );
-
-        if (blockchainData) {
-          await Item.findByIdAndUpdate(newItem._id, {
-            blockchain: { ...blockchainData, action: "register", metadataURI },
-          });
-        }
-      } catch (error) {
-        console.warn("Blockchain registration skipped:", (error as Error).message);
-      }
+    if (!response.ok) {
+      throw new Error("Upload failed");
     }
 
-    // Try AI matching (skip if not available)
-    let bestMatch = null;
-    let highestScore = 0;
-    let allMatches: Array<{
-      id: string;
-      score: number;
-      description: string;
-      imageUrl: string;
-    }> = [];
-
-    if (embedding.length > 0) {
-      try {
-        const { getMatchScore, getTextEmbedding, getCombinedMatchScore } = await import("@/lib/ai-service");
-        const oppositeType = itemType === "lost" ? "found" : "lost";
-        const potentialMatches = await Item.find({
-          type: oppositeType,
-          status: "pending",
-          removedByAdmin: { $ne: true },
-        });
-
-        let newItemTextEmbedding: number[] | null = null;
-        try {
-          newItemTextEmbedding = await getTextEmbedding(description);
-        } catch {
-          console.warn("Text embedding failed");
-        }
-
-        for (const candidateItem of potentialMatches) {
-          if (!candidateItem.embedding?.length) continue;
-
-          let score = 0;
-
-          if (newItemTextEmbedding && candidateItem.description) {
-            try {
-              const candidateTextEmb = await getTextEmbedding(candidateItem.description);
-              const combinedResult = await getCombinedMatchScore(
-                candidateItem.embedding,
-                embedding,
-                candidateTextEmb,
-                newItemTextEmbedding,
-                { image: 0.6, text: 0.4 }
-              );
-              score = combinedResult.combined_match_score;
-            } catch {
-              const matchResult = await getMatchScore(candidateItem.embedding, embedding);
-              score = matchResult.match_score;
-            }
-          } else {
-            const matchResult = await getMatchScore(candidateItem.embedding, embedding);
-            score = matchResult.match_score;
-          }
-
-          if (score > 0.2) {
-            allMatches.push({
-              id: candidateItem._id.toString(),
-              score: Math.round(score * 100),
-              description: candidateItem.description,
-              imageUrl: candidateItem.imageUrl,
-            });
-          }
-
-          // Lowered threshold from 0.8 to 0.5 for lightweight AI
-          if (score > 0.5 && score > highestScore) {
-            highestScore = score;
-            bestMatch = candidateItem;
-          }
-        }
-
-        allMatches.sort((a, b) => b.score - a.score);
-      } catch (error) {
-        console.warn("AI matching skipped:", (error as Error).message);
-      }
-    }
-
-    let status = "No Match Found";
-    let blockchainData: any = null;
-    const matchScorePercent = Math.round(highestScore * 100);
-
-    // Lowered threshold from 0.5 to 0.3 for lightweight AI
-    if (bestMatch && highestScore >= 0.3) {
-      status = highestScore >= 0.5 ? "High Match Found" : "Possible Match";
-
-      if (highestScore >= 0.5) {
-        try {
-          const { recordMatch } = await import("@/lib/blockchain");
-          blockchainData = await recordMatch(
-            itemType === "found"
-              ? (bestMatch as any)._id.toString()
-              : newItem._id.toString(),
-            itemType === "found"
-              ? newItem._id.toString()
-              : (bestMatch as any)._id.toString(),
-            highestScore
-          );
-        } catch (error) {
-          console.warn("Blockchain match recording skipped:", (error as Error).message);
-        }
-      }
-
-      await Item.findByIdAndUpdate(newItem._id, {
-        status: "matched",
-        matchedItemId: (bestMatch as any)._id,
-        matchScore: highestScore,
-        ...(blockchainData && { blockchain: { ...blockchainData, action: "match" } }),
-      });
-
-      await Item.findByIdAndUpdate((bestMatch as any)._id, {
-        status: "matched",
-        matchedItemId: newItem._id,
-        matchScore: highestScore,
-        ...(blockchainData && { blockchain: { ...blockchainData, action: "match" } }),
-      });
-    }
-
-    return NextResponse.json({
-      success: true,
-      itemId: newItem._id,
-      detected_item: detectedItem,
-      match_score: matchScorePercent,
-      status,
-      tx_hash: blockchainData?.txHash || `pending-${newItem._id}`,
-      blockchain: blockchainData || null,
-      matchFound: bestMatch !== null && highestScore >= 0.3,
-      matchDetails: bestMatch
-        ? {
-            matchedItemId: (bestMatch as any)._id,
-            matchedDescription: (bestMatch as any).description,
-            matchedImageUrl: (bestMatch as any).imageUrl,
-            matchScore: matchScorePercent,
-          }
-        : null,
-      similarItems: allMatches.slice(0, 5),
-      message:
-        status === "No Match Found"
-          ? `${itemType === "lost" ? "Lost" : "Found"} item registered.`
-          : `${status}! ${matchScorePercent}% similarity detected.`,
-    });
+    return await response.json();
   } catch (error) {
-    console.error("Upload error:", error);
-    return NextResponse.json(
-      { error: "Internal server error", details: (error as Error).message },
-      { status: 500 }
+    // Mock response for development/testing
+    console.warn(
+      "Backend unavailable, using mock data. Connect your backend via NEXT_PUBLIC_BACKEND_URL"
     );
+
+    // Simulate network delay
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    return {
+      detected_item: ["wallet", "phone", "keys", "backpack"][
+        Math.floor(Math.random() * 4)
+      ],
+      match_score: Math.floor(Math.random() * 40) + 60, // 60-100%
+      status: ["High Match Found", "Possible Match", "No Match Found"][
+        Math.floor(Math.random() * 3)
+      ],
+      tx_hash: `0x${Array.from({ length: 40 }, () =>
+        Math.floor(Math.random() * 16).toString(16)
+      ).join("")}`,
+    };
   }
 }
+
+interface RecentUpload {
+  _id: string;
+  type: "lost" | "found";
+  description: string;
+  imageUrl: string;
+  status: "pending" | "matched" | "resolved";
+  matchScore: number | null;
+  createdAt: string;
+}
+
+function RecentUploads() {
+  const [uploads, setUploads] = useState<RecentUpload[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchRecent = async () => {
+    try {
+      const res = await fetch("/api/uploads/my?limit=3", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setUploads(data.items.slice(0, 3));
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching recent uploads:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecent();
+    const interval = setInterval(fetchRecent, 10000); // Poll every 10 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading && uploads.length === 0) return null;
+  if (uploads.length === 0) return null;
+
+  return (
+    <div className="mt-16 w-full max-w-4xl">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-semibold tracking-tight">Your Recent Activity</h2>
+        <Link href="/my-uploads" className="text-sm text-violet-600 hover:underline font-medium">
+          View all uploads →
+        </Link>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {uploads.map((upload) => (
+          <Card key={upload._id} className="overflow-hidden hover:shadow-md transition-shadow group">
+            <Link href={`/item/${upload._id}`}>
+              <div className="relative aspect-video bg-muted">
+                <Image
+                  src={upload.imageUrl}
+                  alt={upload.description}
+                  fill
+                  className="object-cover group-hover:scale-105 transition-transform duration-300"
+                />
+                <div className="absolute top-2 left-2">
+                  <Badge className="bg-black/60 text-white backdrop-blur-md border-white/20">
+                    {upload.type === "lost" ? <Search className="w-3 h-3 mr-1" /> : <Eye className="w-3 h-3 mr-1" />}
+                    <span className="capitalize">{upload.type}</span>
+                  </Badge>
+                </div>
+              </div>
+              <CardContent className="p-4">
+                <p className="font-medium text-sm line-clamp-1 mb-2">{upload.description}</p>
+                <div className="flex items-center justify-between">
+                  <Badge variant={upload.status === "matched" ? "default" : "secondary"} 
+                    className={upload.status === "matched" ? "bg-green-500 hover:bg-green-600" : ""}>
+                    {upload.status === "matched" ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <Clock className="w-3 h-3 mr-1" />}
+                    <span className="capitalize">{upload.status}</span>
+                  </Badge>
+                  <span className="text-[10px] text-muted-foreground">
+                    {new Date(upload.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+              </CardContent>
+            </Link>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function UploadPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [isLoading, setIsLoading] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const isAuthenticated = useAuthGuard();
+
+  const itemType = searchParams.get("type") || "lost";
+
+  // Show loading while checking auth
+  if (isAuthenticated === null) {
+    return <Loading />;
+  }
+
+  const handleSubmit = async (
+    file: File,
+    type: string,
+    description: string,
+    rewardAmount?: number,
+    location?: { lat: number; lng: number },
+    contactPhone?: string,
+    rewardPaymentMethod?: "offchain" | "onchain"
+  ) => {
+    setIsLoading(true);
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        setImagePreview(reader.result as string);
+
+        // Call real API
+        const formData = new FormData();
+        formData.append("image", file);
+        formData.append("description", description);
+        formData.append("type", type);
+        if (rewardAmount) {
+          formData.append("rewardAmount", rewardAmount.toString());
+        }
+        if (rewardPaymentMethod) {
+          formData.append("rewardPaymentMethod", rewardPaymentMethod);
+        }
+        if (contactPhone && contactPhone.trim()) {
+          formData.append("contactPhone", contactPhone.trim());
+        }
+        if (location) {
+          formData.append("latitude", location.lat.toString());
+          formData.append("longitude", location.lng.toString());
+        }
+
+        try {
+          const response = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+            credentials: "include", //  IMPORTANT
+          });
+
+          const result = await response.json();
+
+          if (!response.ok) {
+            if (response.status === 409) {
+              // Custom handling for duplicates
+              if (confirm(`${result.error}\n\nWould you like to view the existing item instead?`)) {
+                router.push(`/item/${result.existingItemId}`);
+                return;
+              }
+              setIsLoading(false);
+              return;
+            }
+            throw new Error(result.error || "Upload failed");
+          }
+
+          // Store result in session storage for result page
+          sessionStorage.setItem(
+            "analysisResult",
+            JSON.stringify({
+              ...result,
+              imagePreview: reader.result,
+              timestamp: new Date().toISOString(),
+              type: type,
+            })
+          );
+
+          router.push("/result");
+        } catch (error) {
+          console.error("Upload error:", error);
+          alert(`Error: ${(error as Error).message}`);
+          setIsLoading(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (error) {
+      console.error("Error processing image:", error);
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Navbar />
+      <main className="mx-auto flex max-w-7xl flex-col items-center justify-center px-4 py-8 sm:py-16">
+        <div className="mb-8 text-center">
+          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+            {itemType === "lost" ? "Report Lost Item" : "Report Found Item"}
+          </h1>
+          <p className="mt-2 text-muted-foreground">
+            {itemType === "lost"
+              ? "Upload a clear photo of your lost item"
+              : "Upload a photo of the item you found"}
+          </p>
+          <div className="mt-4 flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.push("/upload?type=lost")}
+              className={`rounded-md px-4 py-2 text-sm font-medium border ${
+                itemType === "lost"
+                  ? "bg-red-600 text-white border-red-600"
+                  : "bg-white text-black border-gray-300"
+              }`}
+            >
+              I Lost an Item
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/upload?type=found")}
+              className={`rounded-md px-4 py-2 text-sm font-medium border ${
+                itemType === "found"
+                  ? "bg-green-600 text-white border-green-600"
+                  : "bg-white text-black border-gray-300"
+              }`}
+            >
+              I Found an Item
+            </button>
+          </div>
+        </div>
+
+        <UploadForm
+          onSubmit={handleSubmit}
+          isLoading={isLoading}
+          initialItemType={itemType === "found" ? "found" : "lost"}
+        />
+
+        <RecentUploads />
+      </main>
+    </div>
+  );
+}
+
+export default function UploadPage() {
+  return (
+    <Suspense fallback={<Loading />}>
+      {" "}
+      {/* Use the new Loading component */}
+      <UploadPageContent />
+    </Suspense>
+  );
+}
+
