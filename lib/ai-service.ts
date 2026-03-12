@@ -6,8 +6,6 @@ const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://localhost:5
 
 export async function getEmbedding(fileBuffer: Buffer, filename: string): Promise<number[]> {
     const form = new FormData()
-
-    // Convert buffer to stream for form-data
     const stream = Readable.from(fileBuffer)
     form.append('image', stream, { filename })
 
@@ -16,7 +14,7 @@ export async function getEmbedding(fileBuffer: Buffer, filename: string): Promis
             headers: {
                 ...form.getHeaders(),
             },
-            timeout: 30000, // 30 second timeout
+            timeout: 60000,
         })
 
         return response.data.embedding
@@ -38,15 +36,9 @@ export async function getMatchScore(
     try {
         const response = await axios.post(
             `${PYTHON_SERVICE_URL}/match`,
-            {
-                embedding1,
-                embedding2,
-            },
-            {
-                timeout: 10000, // 10 second timeout
-            }
+            { embedding1, embedding2 },
+            { timeout: 30000 }
         )
-
         return response.data
     } catch (error) {
         if (axios.isAxiosError(error)) {
@@ -61,11 +53,8 @@ export async function getTextEmbedding(text: string): Promise<number[]> {
         const response = await axios.post(
             `${PYTHON_SERVICE_URL}/process_text`,
             { text },
-            {
-                timeout: 10000, // 10 second timeout
-            }
+            { timeout: 30000 }
         )
-
         return response.data.embedding
     } catch (error) {
         if (axios.isAxiosError(error)) {
@@ -86,11 +75,8 @@ export async function getTextMatchScore(
                 text_embedding1: textEmbedding1,
                 text_embedding2: textEmbedding2,
             },
-            {
-                timeout: 10000, // 10 second timeout
-            }
+            { timeout: 30000 }
         )
-
         return response.data
     } catch (error) {
         if (axios.isAxiosError(error)) {
@@ -123,11 +109,8 @@ export async function getCombinedMatchScore(
                 text_embedding2: textEmbedding2,
                 weights: weights || { image: 0.6, text: 0.4 },
             },
-            {
-                timeout: 10000, // 10 second timeout
-            }
+            { timeout: 30000 }
         )
-
         return response.data
     } catch (error) {
         if (axios.isAxiosError(error)) {
@@ -145,7 +128,7 @@ export async function getCombinedMatchScore(
 
 export async function checkAIServiceHealth(): Promise<boolean> {
     try {
-        await axios.get(`${PYTHON_SERVICE_URL}/health`, { timeout: 5000 })
+        await axios.get(`${PYTHON_SERVICE_URL}/health`, { timeout: 15000 })
         return true
     } catch (error) {
         return false
