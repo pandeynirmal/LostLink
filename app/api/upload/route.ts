@@ -5,14 +5,12 @@ import { cookies } from "next/headers";
 import { verifyToken } from "@/lib/auth";
 import { v2 as cloudinary } from "cloudinary";
 
-// Configure Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Helper: Upload buffer to Cloudinary
 async function uploadToCloudinary(buffer: Buffer, filename: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -32,27 +30,19 @@ async function uploadToCloudinary(buffer: Buffer, filename: string): Promise<str
 
 export async function POST(request: NextRequest) {
   try {
-    // Require login
     const cookieStore = await cookies();
     const token = cookieStore.get("token")?.value;
 
     if (!token) {
-      return NextResponse.json(
-        { error: "Unauthorized. Please login first." },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized. Please login first." }, { status: 401 });
     }
 
     const decoded = verifyToken(token);
     if (!decoded) {
-      return NextResponse.json(
-        { error: "Invalid token." },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Invalid token." }, { status: 401 });
     }
 
     const userId = decoded.userId;
-
     const formData = await request.formData();
 
     const image = formData.get("image") as File;
@@ -61,12 +51,10 @@ export async function POST(request: NextRequest) {
     const rawRewardAmount = formData.get("rewardAmount");
     const parsedRewardAmount =
       typeof rawRewardAmount === "string" && rawRewardAmount.trim() !== ""
-        ? Number(rawRewardAmount)
-        : 0;
+        ? Number(rawRewardAmount) : 0;
     const rewardAmount = Number.isFinite(parsedRewardAmount) ? parsedRewardAmount : 0;
     const rawContactPhone = formData.get("contactPhone");
-    const contactPhone =
-      typeof rawContactPhone === "string" ? rawContactPhone.trim() : "";
+    const contactPhone = typeof rawContactPhone === "string" ? rawContactPhone.trim() : "";
     const rewardPaymentMethod =
       (formData.get("rewardPaymentMethod") as "offchain" | "onchain") || "offchain";
     const latitude = parseFloat(formData.get("latitude") as string);
@@ -80,61 +68,45 @@ export async function POST(request: NextRequest) {
     }
 
     if (!["lost", "found"].includes(itemType)) {
-      return NextResponse.json(
-        { error: 'Invalid type. Must be "lost" or "found"' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid type. Must be "lost" or "found"' }, { status: 400 });
     }
 
     if (rewardAmount < 0) {
-      return NextResponse.json(
-        { error: "Reward amount must be greater than or equal to 0" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Reward amount must be greater than or equal to 0" }, { status: 400 });
     }
 
     if (itemType === "lost" && contactPhone) {
       const phonePattern = /^[+\d][\d\s-]{7,19}$/;
       if (!phonePattern.test(contactPhone)) {
-        return NextResponse.json(
-          { error: "Enter a valid mobile number." },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Enter a valid mobile number." }, { status: 400 });
       }
     }
 
     await connectDB();
 
-    // Upload image to Cloudinary
     const bytes = await image.arrayBuffer();
     const buffer = Buffer.from(bytes);
     let imageUrl = "";
 
     try {
       imageUrl = await uploadToCloudinary(buffer, image.name);
-      console.log("Image uploaded to Cloudinary:", imageUrl);
     } catch (error) {
-      console.error("Cloudinary upload failed:", error);
       return NextResponse.json(
         { error: "Image upload failed", details: (error as Error).message },
         { status: 500 }
       );
     }
 
-    // Try AI embedding (skip if Python service not available)
     let embedding: number[] = [];
     let detectedItem = description.split(" ")[0] || "Item";
 
     try {
       const { getEmbedding } = await import("@/lib/ai-service");
       embedding = await getEmbedding(buffer, image.name);
-      console.log("AI embedding generated successfully");
     } catch (error) {
       console.warn("AI service unavailable, skipping embedding:", (error as Error).message);
-      // Continue without embedding - item will still be saved
     }
 
-    // Prevent duplicate uploads by same user (only if embedding available)
     if (embedding.length > 0) {
       const myExistingItems = await Item.find({
         userId: userId,
@@ -166,7 +138,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create item in MongoDB
     const newItem = await Item.create({
       type: itemType,
       description,
@@ -181,26 +152,17 @@ export async function POST(request: NextRequest) {
       longitude: !isNaN(longitude) ? longitude : undefined,
     });
 
-    console.log("Item saved:", newItem._id);
-
-    // Try blockchain registration (skip if not available)
     if (itemType === "lost") {
       try {
         const { registerItem } = await import("@/lib/blockchain");
         const mockCid = `Qm${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
         const metadataURI = `ipfs://${mockCid}`;
-
         const blockchainData = await registerItem(
-          newItem._id.toString(),
-          itemType,
+          newItem._id.toString(), itemType,
           `QR-${newItem._id.toString().substring(0, 8)}`,
-          latitude || 0,
-          longitude || 0,
-          description.substring(0, 32),
-          rewardAmount,
-          metadataURI
+          latitude || 0, longitude || 0,
+          description.substring(0, 32), rewardAmount, metadataURI
         );
-
         if (blockchainData) {
           await Item.findByIdAndUpdate(newItem._id, {
             blockchain: { ...blockchainData, action: "register", metadataURI },
@@ -208,19 +170,12 @@ export async function POST(request: NextRequest) {
         }
       } catch (error) {
         console.warn("Blockchain registration skipped:", (error as Error).message);
-        // Continue without blockchain
       }
     }
 
-    // Try AI matching (skip if not available)
     let bestMatch = null;
     let highestScore = 0;
-    let allMatches: Array<{
-      id: string;
-      score: number;
-      description: string;
-      imageUrl: string;
-    }> = [];
+    let allMatches: Array<{ id: string; score: number; description: string; imageUrl: string }> = [];
 
     if (embedding.length > 0) {
       try {
@@ -248,10 +203,8 @@ export async function POST(request: NextRequest) {
             try {
               const candidateTextEmb = await getTextEmbedding(candidateItem.description);
               const combinedResult = await getCombinedMatchScore(
-                candidateItem.embedding,
-                embedding,
-                candidateTextEmb,
-                newItemTextEmbedding,
+                candidateItem.embedding, embedding,
+                candidateTextEmb, newItemTextEmbedding,
                 { image: 0.6, text: 0.4 }
               );
               score = combinedResult.combined_match_score;
@@ -264,7 +217,7 @@ export async function POST(request: NextRequest) {
             score = matchResult.match_score;
           }
 
-          if (score > 0.3) {
+          if (score > 0.2) {
             allMatches.push({
               id: candidateItem._id.toString(),
               score: Math.round(score * 100),
@@ -273,7 +226,8 @@ export async function POST(request: NextRequest) {
             });
           }
 
-          if (score > 0.8 && score > highestScore) {
+          // Lowered threshold to 0.3 for lightweight AI
+          if (score > 0.3 && score > highestScore) {
             highestScore = score;
             bestMatch = candidateItem;
           }
@@ -289,19 +243,15 @@ export async function POST(request: NextRequest) {
     let blockchainData: any = null;
     const matchScorePercent = Math.round(highestScore * 100);
 
-    if (bestMatch && highestScore >= 0.5) {
-      status = highestScore >= 0.7 ? "High Match Found" : "Possible Match";
+    if (bestMatch && highestScore >= 0.2) {
+      status = highestScore >= 0.4 ? "High Match Found" : "Possible Match";
 
-      if (highestScore >= 0.7) {
+      if (highestScore >= 0.4) {
         try {
           const { recordMatch } = await import("@/lib/blockchain");
           blockchainData = await recordMatch(
-            itemType === "found"
-              ? (bestMatch as any)._id.toString()
-              : newItem._id.toString(),
-            itemType === "found"
-              ? newItem._id.toString()
-              : (bestMatch as any)._id.toString(),
+            itemType === "found" ? (bestMatch as any)._id.toString() : newItem._id.toString(),
+            itemType === "found" ? newItem._id.toString() : (bestMatch as any)._id.toString(),
             highestScore
           );
         } catch (error) {
@@ -332,7 +282,7 @@ export async function POST(request: NextRequest) {
       status,
       tx_hash: blockchainData?.txHash || `pending-${newItem._id}`,
       blockchain: blockchainData || null,
-      matchFound: bestMatch !== null && highestScore >= 0.5,
+      matchFound: bestMatch !== null && highestScore >= 0.2,
       matchDetails: bestMatch
         ? {
             matchedItemId: (bestMatch as any)._id,
@@ -355,3 +305,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
