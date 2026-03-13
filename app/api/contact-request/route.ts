@@ -8,8 +8,7 @@ import { verifyToken } from "@/lib/auth";
 
 const MIN_CLAIM_MATCH_SCORE = 50;
 
-/* ----------------------- SCORE NORMALIZATION ----------------------- */
-
+/* ---------- SCORE NORMALIZATION ---------- */
 const normalizeScore = (score: unknown): number => {
     if (typeof score !== "number" || !Number.isFinite(score)) return 0;
 
@@ -24,7 +23,7 @@ const normalizeScore = (score: unknown): number => {
     return Math.round(normalized * 100) / 100;
 };
 
-/* ----------------------- IMAGE HELPERS ----------------------- */
+/* ---------- IMAGE HELPERS ---------- */
 
 const extractFilename = (url: string): string => {
     if (typeof url !== "string") return "";
@@ -60,7 +59,7 @@ const extractPublicId = (url: string): string => {
     }
 };
 
-/* ----------------------- TEXT TOKENIZER ----------------------- */
+/* ---------- TOKENIZER ---------- */
 
 const tokenize = (value: unknown): string[] => {
     if (typeof value !== "string") return [];
@@ -72,7 +71,7 @@ const tokenize = (value: unknown): string[] => {
         .filter(token => token.length > 2);
 };
 
-/* ----------------------- SIMILARITY FUNCTION ----------------------- */
+/* ---------- SIMILARITY ---------- */
 
 const similarityPercent = (
     aDescription: unknown,
@@ -123,7 +122,7 @@ const similarityPercent = (
     return Math.round(score * 100) / 100;
 };
 
-/* ----------------------- AUTH ----------------------- */
+/* ---------- AUTH ---------- */
 
 async function getUserIdFromCookie() {
 
@@ -138,7 +137,7 @@ async function getUserIdFromCookie() {
     return decoded.userId;
 }
 
-/* ----------------------- CREATE CLAIM ----------------------- */
+/* ---------- CREATE CLAIM ---------- */
 
 export async function POST(request: NextRequest) {
 
@@ -185,7 +184,6 @@ export async function POST(request: NextRequest) {
         });
 
         if (existingRequest) {
-
             const already =
                 existingRequest.status === "approved"
                     ? "Request already sent and approved"
@@ -196,18 +194,13 @@ export async function POST(request: NextRequest) {
 
         let aiMatchScore = normalizeScore(item.matchScore);
 
-        /* ---------- fallback if AI score missing ---------- */
-
         if (aiMatchScore <= 0) {
-
             const counterpart = await Item.findOne({ matchedItemId: item._id })
                 .sort({ matchScore: -1 })
                 .select("matchScore");
 
             aiMatchScore = normalizeScore(counterpart?.matchScore);
         }
-
-        /* ---------- fallback comparison ---------- */
 
         if (aiMatchScore <= 0 || aiMatchScore < MIN_CLAIM_MATCH_SCORE) {
 
@@ -306,6 +299,96 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(
             { error: 'Server error' },
+            { status: 500 }
+        );
+    }
+}
+
+/* ---------- GET CLAIMS ---------- */
+
+export async function GET(request: NextRequest) {
+
+    try {
+
+        const userId = await getUserIdFromCookie();
+
+        if (!userId) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        await connectDB();
+
+        const requests = await ContactRequest.find({
+            ownerId: userId,
+            status: { $in: ["pending", "approved"] }
+        })
+        .sort({ createdAt: -1 })
+        .populate('itemId', 'description type imageUrl rewardAmount')
+        .populate('requesterId', 'fullName email')
+        .lean();
+
+        return NextResponse.json({ requests });
+
+    } catch (error) {
+
+        console.error(error);
+
+        return NextResponse.json(
+            { error: 'Server error' },
+            { status: 500 }
+        );
+    }
+}
+
+/* ---------- DELETE CLAIM ---------- */
+
+export async function DELETE(request: NextRequest) {
+
+    try {
+
+        const userId = await getUserIdFromCookie();
+
+        if (!userId) {
+            return NextResponse.json(
+                { error: "Unauthorized" },
+                { status: 401 }
+            );
+        }
+
+        const { requestId } = await request.json();
+
+        await connectDB();
+
+        if (!requestId) {
+            return NextResponse.json(
+                { error: "requestId required" },
+                { status: 400 }
+            );
+        }
+
+        const deleted = await ContactRequest.findOneAndDelete({
+            _id: requestId,
+            ownerId: userId
+        });
+
+        if (!deleted) {
+            return NextResponse.json(
+                { error: "Claim not found" },
+                { status: 404 }
+            );
+        }
+
+        return NextResponse.json({
+            success: true,
+            message: "Claim deleted"
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        return NextResponse.json(
+            { error: "Server error" },
             { status: 500 }
         );
     }
