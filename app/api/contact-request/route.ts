@@ -91,6 +91,7 @@ export async function POST(request: NextRequest) {
 
         // Prevent owner from requesting their own item
         if (item.userId?.toString() === userId) {
+            console.log('[Contact Request] Blocked self-request attempt. Item owner:', item.userId.toString(), 'Requester:', userId);
             return NextResponse.json(
                 { error: 'You cannot request contact for your own item' },
                 { status: 400 }
@@ -128,17 +129,21 @@ export async function POST(request: NextRequest) {
         };
 
         let aiMatchScore = normalizeScore(item.matchScore);
+        console.log('[Contact Request] Initial item.matchScore:', item.matchScore, '-> normalized to:', aiMatchScore);
 
         // Fallback for legacy or partial records where only the counterpart item has score.
         if (aiMatchScore <= 0) {
+            console.log('[Contact Request] Initial score is 0, checking counterpart...');
             const counterpart = await Item.findOne({ matchedItemId: item._id })
                 .sort({ matchScore: -1 })
                 .select("matchScore");
             aiMatchScore = normalizeScore(counterpart?.matchScore);
+            console.log('[Contact Request] Counterpart matchScore:', counterpart?.matchScore, '-> normalized to:', aiMatchScore);
         }
 
         // Last fallback: compare this target item with requester's opposite-type items.
         if (aiMatchScore <= 0) {
+            console.log('[Contact Request] Score still 0, using fallback comparison...');
             const requesterType = item.type === "lost" ? "found" : "lost";
             const requesterCandidates = await Item.find({
                 userId,
@@ -163,12 +168,16 @@ export async function POST(request: NextRequest) {
                 fallbackScore = Math.max(fallbackScore, simScore, candidateScore);
             }
             aiMatchScore = fallbackScore;
+            console.log('[Contact Request] Fallback score calculated:', aiMatchScore);
         }
 
-        if (aiMatchScore < MIN_CLAIM_MATCH_SCORE) {
+        console.log('[Contact Request] Final aiMatchScore:', aiMatchScore, 'MIN_CLAIM_MATCH_SCORE:', MIN_CLAIM_MATCH_SCORE);
+
+        if (!aiMatchScore || aiMatchScore < MIN_CLAIM_MATCH_SCORE) {
+            console.log('[Contact Request] REJECTED: aiMatchScore', aiMatchScore, 'is less than MIN_CLAIM_MATCH_SCORE', MIN_CLAIM_MATCH_SCORE);
             return NextResponse.json(
                 {
-                    error: `Claim request is allowed only for matches at ${MIN_CLAIM_MATCH_SCORE}% or above.`,
+                    error: `Claim request rejected. Match score: ${aiMatchScore || 0}%. Minimum required: ${MIN_CLAIM_MATCH_SCORE}%.`,
                 },
                 { status: 400 }
             );
