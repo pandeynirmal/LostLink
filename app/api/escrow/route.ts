@@ -24,7 +24,10 @@ export async function GET(request: NextRequest) {
 
     const itemId = request.nextUrl.searchParams.get("itemId") || "";
     if (!itemId) {
-      return NextResponse.json({ error: "itemId is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "itemId is required" },
+        { status: 400 }
+      );
     }
 
     await connectDB();
@@ -50,12 +53,20 @@ export async function GET(request: NextRequest) {
     }
 
     if (!escrow) {
+      const itemForMeta = await Item.findById(itemId)
+        .select("userId matchedItemId")
+        .lean();
+      const isAdmin = me?.role === "admin";
+      const isOwner = (itemForMeta as any)?.userId?.toString() === userId;
       return NextResponse.json(
-        { success: true, escrow: null },
+        {
+          success: true,
+          escrow: null,
+          meta: { isOwner, isFinder: false, isAdmin },
+        },
         { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
       );
     }
-
     const isAdmin = me?.role === "admin";
     const isOwner = escrow.ownerId?._id?.toString?.() === userId;
     const isFinder = escrow.finderId?._id?.toString?.() === userId;
@@ -92,9 +103,11 @@ export async function GET(request: NextRequest) {
           autoReleaseAvailable,
           timeUntilAutoRelease,
           canRaiseDispute:
-            ["awaiting_delivery", "item_delivered", "awaiting_confirmation"].includes(
-              escrow.state
-            ) &&
+            [
+              "awaiting_delivery",
+              "item_delivered",
+              "awaiting_confirmation",
+            ].includes(escrow.state) &&
             (isOwner || isFinder || isAdmin),
         },
       },
@@ -113,10 +126,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { itemId, amountEth, holdTxHash = "", holdSource = "project_wallet" } =
-      await request.json();
+    const {
+      itemId,
+      amountEth,
+      holdTxHash = "",
+      holdSource = "project_wallet",
+    } = await request.json();
     if (!itemId) {
-      return NextResponse.json({ error: "itemId is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "itemId is required" },
+        { status: 400 }
+      );
     }
 
     await connectDB();
@@ -141,7 +161,6 @@ export async function POST(request: NextRequest) {
       Number.isFinite(Number(amountEth)) && Number(amountEth) > 0
         ? Number(amountEth)
         : baseAmount;
-  
 
     const existing = await EscrowCase.findOne({ itemId: item._id }).sort({
       createdAt: -1,
@@ -171,7 +190,11 @@ export async function POST(request: NextRequest) {
       state: "funded",
     });
 
-    return NextResponse.json({ success: true, escrow, message: "Escrow created." });
+    return NextResponse.json({
+      success: true,
+      escrow,
+      message: "Escrow created.",
+    });
   } catch (error) {
     console.error("Escrow POST error:", error);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
