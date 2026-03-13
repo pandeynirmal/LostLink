@@ -45,9 +45,11 @@ async function getUserIdFromCookie() {
 }
 
 function countReleaseApprovals(escrow: any) {
-  return Number(Boolean(escrow.ownerReleaseApproved))
-    + Number(Boolean(escrow.finderReleaseApproved))
-    + Number(Boolean(escrow.adminReleaseApproved));
+  return (
+    Number(Boolean(escrow.ownerReleaseApproved)) +
+    Number(Boolean(escrow.finderReleaseApproved)) +
+    Number(Boolean(escrow.adminReleaseApproved))
+  );
 }
 
 async function executeEscrowRelease(escrow: any, providedTxHash?: string) {
@@ -55,7 +57,9 @@ async function executeEscrowRelease(escrow: any, providedTxHash?: string) {
   if (!freshEscrow) throw new Error("Escrow not found.");
 
   if (freshEscrow.state === "released" || freshEscrow.finderFundReceived) {
-    console.log(`[executeEscrowRelease] Skipping - already released. State: ${freshEscrow.state}`);
+    console.log(
+      `[executeEscrowRelease] Skipping - already released. State: ${freshEscrow.state}`
+    );
     return freshEscrow.releaseTxHash || providedTxHash || "already_completed";
   }
 
@@ -72,12 +76,19 @@ async function executeEscrowRelease(escrow: any, providedTxHash?: string) {
     throw new Error("Escrow amount must be greater than 0.");
   }
 
-  const pseudoTxHash = providedTxHash || ("offchain_" + Date.now().toString(16));
+  const pseudoTxHash = providedTxHash || "offchain_" + Date.now().toString(16);
   const isOffchain = freshEscrow.paymentMethod !== "onchain";
 
-  if (!item.isClaimed && item.status !== "resolved" && !freshEscrow.finderFundReceived) {
+  if (
+    !item.isClaimed &&
+    item.status !== "resolved" &&
+    !freshEscrow.finderFundReceived
+  ) {
     if (isOffchain) {
-      await User.updateOne({ _id: finder._id }, { $inc: { offchainBalance: amount } });
+      await User.updateOne(
+        { _id: finder._id },
+        { $inc: { offchainBalance: amount } }
+      );
 
       await WalletTransaction.create({
         fromUserId: freshEscrow.ownerId,
@@ -160,7 +171,10 @@ export async function POST(request: NextRequest) {
     } = body;
 
     if (!itemId || !action) {
-      return NextResponse.json({ error: "itemId and action are required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "itemId and action are required" },
+        { status: 400 }
+      );
     }
 
     await connectDB();
@@ -174,12 +188,17 @@ export async function POST(request: NextRequest) {
     const isAdmin = me?.role === "admin";
     const isOwner = item.userId?.toString() === userId;
 
-    let escrow = await EscrowCase.findOne({ itemId: item._id }).sort({ createdAt: -1 });
+    let escrow = await EscrowCase.findOne({ itemId: item._id }).sort({
+      createdAt: -1,
+    });
 
     // ── CREATE ESCROW ──────────────────────────────────────────────────────────
     if (action === "create_escrow") {
       if (!isOwner && !isAdmin) {
-        return NextResponse.json({ error: "Only owner/admin can create escrow." }, { status: 403 });
+        return NextResponse.json(
+          { error: "Only owner/admin can create escrow." },
+          { status: 403 }
+        );
       }
 
       // If an active escrow already exists, return it (prevent duplicates)
@@ -207,22 +226,36 @@ export async function POST(request: NextRequest) {
 
       const amount = Number(item.rewardAmount || 0);
       if (!Number.isFinite(amount) || amount <= 0) {
-        return NextResponse.json({ error: "Item must have a reward amount > 0 to create escrow." }, { status: 400 });
+        return NextResponse.json(
+          { error: "Item must have a reward amount > 0 to create escrow." },
+          { status: 400 }
+        );
       }
 
       const isOffchain = paymentMethod !== "onchain";
 
       if (isOffchain) {
         const owner = await User.findById(item.userId);
-        if (!owner) return NextResponse.json({ error: "Owner not found." }, { status: 400 });
+        if (!owner)
+          return NextResponse.json(
+            { error: "Owner not found." },
+            { status: 400 }
+          );
         const ownerBalance = Number(owner.offchainBalance || 0);
         if (ownerBalance < amount) {
           return NextResponse.json(
-            { error: `Insufficient wallet balance. You have ${ownerBalance.toFixed(4)} ETH but escrow requires ${amount} ETH. Load funds in your wallet first.` },
+            {
+              error: `Insufficient wallet balance. You have ${ownerBalance.toFixed(
+                4
+              )} ETH but escrow requires ${amount} ETH. Load funds in your wallet first.`,
+            },
             { status: 400 }
           );
         }
-        await User.updateOne({ _id: owner._id }, { $inc: { offchainBalance: -amount } });
+        await User.updateOne(
+          { _id: owner._id },
+          { $inc: { offchainBalance: -amount } }
+        );
         await WalletTransaction.create({
           fromUserId: owner._id,
           toUserId: owner._id,
@@ -268,11 +301,20 @@ export async function POST(request: NextRequest) {
     }
 
     if (!escrow) {
-      return NextResponse.json({ error: "Escrow not created for this item yet." }, { status: 404 });
+      return NextResponse.json(
+        { error: "Escrow not created for this item yet." },
+        { status: 404 }
+      );
     }
 
-    if (["released", "refunded"].includes(escrow.state) && action !== "allow_chat") {
-      return NextResponse.json({ error: "Escrow already closed." }, { status: 400 });
+    if (
+      ["released", "refunded"].includes(escrow.state) &&
+      action !== "allow_chat"
+    ) {
+      return NextResponse.json(
+        { error: "Escrow already closed." },
+        { status: 400 }
+      );
     }
 
     const finderUserId = escrow.finderId?.toString() || "";
@@ -284,7 +326,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Not allowed" }, { status: 403 });
       }
       if (!escrow.finderId) {
-        return NextResponse.json({ error: "Assign finder before opening chat." }, { status: 400 });
+        return NextResponse.json(
+          { error: "Assign finder before opening chat." },
+          { status: 400 }
+        );
       }
       let conversation = await Conversation.findOne({
         itemId: item._id,
@@ -300,13 +345,19 @@ export async function POST(request: NextRequest) {
           deletedFor: [],
         });
       }
-      return NextResponse.json({ success: true, conversationId: conversation._id });
+      return NextResponse.json({
+        success: true,
+        conversationId: conversation._id,
+      });
     }
 
     // ── ASSIGN FINDER ──────────────────────────────────────────────────────────
     if (action === "assign_finder") {
       if (!isOwner && !isAdmin) {
-        return NextResponse.json({ error: "Only owner/admin can assign finder." }, { status: 403 });
+        return NextResponse.json(
+          { error: "Only owner/admin can assign finder." },
+          { status: 403 }
+        );
       }
 
       if (!canTransition(escrow.state, "claim_assigned")) {
@@ -330,9 +381,13 @@ export async function POST(request: NextRequest) {
         }).sort({ createdAt: -1 });
       }
 
-      const chosenFinderId = finderId || linkedRequest?.requesterId?.toString() || "";
+      const chosenFinderId =
+        finderId || linkedRequest?.requesterId?.toString() || "";
       if (!chosenFinderId) {
-        return NextResponse.json({ error: "No approved finder available." }, { status: 400 });
+        return NextResponse.json(
+          { error: "No approved finder available." },
+          { status: 400 }
+        );
       }
 
       escrow.finderId = chosenFinderId as any;
@@ -342,19 +397,32 @@ export async function POST(request: NextRequest) {
 
       void notifyFinderAssigned(escrow);
 
-      return NextResponse.json({ success: true, escrow, message: "Finder assigned to escrow." });
+      return NextResponse.json({
+        success: true,
+        escrow,
+        message: "Finder assigned to escrow.",
+      });
     }
 
     // ── PROCEED TO DELIVERY ────────────────────────────────────────────────────
     if (action === "proceed_to_delivery") {
       if (!isOwner && !isAdmin) {
-        return NextResponse.json({ error: "Only owner/admin can proceed to delivery." }, { status: 403 });
+        return NextResponse.json(
+          { error: "Only owner/admin can proceed to delivery." },
+          { status: 403 }
+        );
       }
       if (escrow.state !== "claim_assigned") {
-        return NextResponse.json({ error: `Cannot proceed to delivery from state: ${escrow.state}` }, { status: 400 });
+        return NextResponse.json(
+          { error: `Cannot proceed to delivery from state: ${escrow.state}` },
+          { status: 400 }
+        );
       }
       if (!escrow.finderId) {
-        return NextResponse.json({ error: "No finder assigned yet." }, { status: 400 });
+        return NextResponse.json(
+          { error: "No finder assigned yet." },
+          { status: 400 }
+        );
       }
 
       escrow.state = "awaiting_delivery";
@@ -362,16 +430,26 @@ export async function POST(request: NextRequest) {
 
       void notifyDeliveryInitiated(escrow);
 
-      return NextResponse.json({ success: true, escrow, message: "Finder notified to begin delivery." });
+      return NextResponse.json({
+        success: true,
+        escrow,
+        message: "Finder notified to begin delivery.",
+      });
     }
 
     // ── INITIATE DELIVERY ──────────────────────────────────────────────────────
     if (action === "initiate_delivery") {
       if (!isFinder && !isAdmin) {
-        return NextResponse.json({ error: "Only finder/admin can initiate delivery." }, { status: 403 });
+        return NextResponse.json(
+          { error: "Only finder/admin can initiate delivery." },
+          { status: 403 }
+        );
       }
 
-      if (escrow.state !== "awaiting_delivery" && !canTransition(escrow.state, "awaiting_delivery")) {
+      if (
+        escrow.state !== "awaiting_delivery" &&
+        !canTransition(escrow.state, "awaiting_delivery")
+      ) {
         return NextResponse.json(
           { error: `Cannot initiate delivery from state: ${escrow.state}` },
           { status: 400 }
@@ -379,8 +457,10 @@ export async function POST(request: NextRequest) {
       }
 
       escrow.state = "awaiting_delivery";
-      escrow.deliveryMethod = deliveryMethod || escrow.deliveryMethod || "in_person";
-      escrow.deliveryTrackingId = deliveryTrackingId || escrow.deliveryTrackingId || undefined;
+      escrow.deliveryMethod =
+        deliveryMethod || escrow.deliveryMethod || "in_person";
+      escrow.deliveryTrackingId =
+        deliveryTrackingId || escrow.deliveryTrackingId || undefined;
       escrow.deliveryNotes = deliveryNotes || escrow.deliveryNotes || undefined;
       if (deliveryPhotos?.length > 0) {
         escrow.deliveryPhotos = deliveryPhotos;
@@ -389,13 +469,20 @@ export async function POST(request: NextRequest) {
 
       void notifyDeliveryInitiated(escrow);
 
-      return NextResponse.json({ success: true, escrow, message: "Delivery initiated." });
+      return NextResponse.json({
+        success: true,
+        escrow,
+        message: "Delivery initiated.",
+      });
     }
 
     // ── MARK ITEM DELIVERED ────────────────────────────────────────────────────
     if (action === "mark_item_delivered") {
       if (!isFinder && !isAdmin) {
-        return NextResponse.json({ error: "Only finder/admin can mark item delivered." }, { status: 403 });
+        return NextResponse.json(
+          { error: "Only finder/admin can mark item delivered." },
+          { status: 403 }
+        );
       }
 
       if (!canTransition(escrow.state, "item_delivered")) {
@@ -412,17 +499,27 @@ export async function POST(request: NextRequest) {
 
       void notifyItemDelivered(escrow);
 
-      return NextResponse.json({ success: true, escrow, message: "Item marked as delivered." });
+      return NextResponse.json({
+        success: true,
+        escrow,
+        message: "Item marked as delivered.",
+      });
     }
 
     if (!isOwner && !isFinder && !isAdmin) {
-      return NextResponse.json({ error: "Not allowed for this escrow." }, { status: 403 });
+      return NextResponse.json(
+        { error: "Not allowed for this escrow." },
+        { status: 403 }
+      );
     }
 
     // ── CONFIRM ITEM RECEIVED ──────────────────────────────────────────────────
     if (action === "confirm_item_received") {
       if (!isOwner && !isAdmin) {
-        return NextResponse.json({ error: "Only owner/admin can confirm item received." }, { status: 403 });
+        return NextResponse.json(
+          { error: "Only owner/admin can confirm item received." },
+          { status: 403 }
+        );
       }
 
       if (!escrow.ownerItemReceived) {
@@ -450,7 +547,10 @@ export async function POST(request: NextRequest) {
     // ── CONFIRM FUND RECEIVED ──────────────────────────────────────────────────
     if (action === "confirm_fund_received") {
       if (!isFinder && !isAdmin) {
-        return NextResponse.json({ error: "Only finder/admin can confirm fund received." }, { status: 403 });
+        return NextResponse.json(
+          { error: "Only finder/admin can confirm fund received." },
+          { status: 403 }
+        );
       }
 
       if (!escrow.finderFundReceived) {
@@ -469,6 +569,12 @@ export async function POST(request: NextRequest) {
       if (isOwner && !escrow.ownerReleaseApproved) {
         escrow.ownerReleaseApproved = true;
         escrow.ownerReleaseApprovedAt = now;
+        // Owner approving release implicitly confirms item received
+        if (!escrow.ownerItemReceived) {
+          escrow.ownerItemReceived = true;
+          escrow.ownerItemReceivedAt = now;
+          setAutoReleaseTimer(escrow);
+        }
       }
       if (isFinder && !escrow.finderReleaseApproved) {
         escrow.finderReleaseApproved = true;
@@ -485,8 +591,9 @@ export async function POST(request: NextRequest) {
 
       void notifyReleaseApproved(escrow, releaseVotes);
 
-      const bothPartiesAgreed = escrow.ownerReleaseApproved && escrow.finderReleaseApproved;
-      const multiSigReady = escrow.ownerItemReceived && releaseVotes >= 2;
+      const bothPartiesAgreed =
+        escrow.ownerReleaseApproved && escrow.finderReleaseApproved;
+      const multiSigReady = releaseVotes >= 2; // removed ownerItemReceived requirement
 
       if ((bothPartiesAgreed || multiSigReady) && escrow.state !== "released") {
         const txHash = await executeEscrowRelease(escrow, releaseTxHash);
@@ -512,18 +619,30 @@ export async function POST(request: NextRequest) {
     // ── TRIGGER AUTO-RELEASE ───────────────────────────────────────────────────
     if (action === "trigger_auto_release") {
       if (!escrow.ownerItemReceived) {
-        return NextResponse.json({ error: "Owner must confirm receipt first." }, { status: 400 });
+        return NextResponse.json(
+          { error: "Owner must confirm receipt first." },
+          { status: 400 }
+        );
       }
 
-      if (!escrow.autoReleaseAt || Date.now() < escrow.autoReleaseAt.getTime()) {
-        return NextResponse.json({
-          error: "Auto-release time not reached yet.",
-          autoReleaseAt: escrow.autoReleaseAt,
-        }, { status: 400 });
+      if (
+        !escrow.autoReleaseAt ||
+        Date.now() < escrow.autoReleaseAt.getTime()
+      ) {
+        return NextResponse.json(
+          {
+            error: "Auto-release time not reached yet.",
+            autoReleaseAt: escrow.autoReleaseAt,
+          },
+          { status: 400 }
+        );
       }
 
       if (escrow.autoReleaseTriggered) {
-        return NextResponse.json({ error: "Auto-release already triggered." }, { status: 400 });
+        return NextResponse.json(
+          { error: "Auto-release already triggered." },
+          { status: 400 }
+        );
       }
 
       escrow.autoReleaseTriggered = true;
@@ -544,7 +663,10 @@ export async function POST(request: NextRequest) {
     // ── RAISE DISPUTE ──────────────────────────────────────────────────────────
     if (action === "raise_dispute") {
       if (!isOwner && !isFinder && !isAdmin) {
-        return NextResponse.json({ error: "Only owner, finder, or admin can raise dispute." }, { status: 403 });
+        return NextResponse.json(
+          { error: "Only owner, finder, or admin can raise dispute." },
+          { status: 403 }
+        );
       }
 
       if (!canTransition(escrow.state, "disputed")) {
@@ -555,7 +677,8 @@ export async function POST(request: NextRequest) {
       }
 
       escrow.state = "disputed";
-      escrow.disputeReason = String(disputeReason || "").trim() || "Dispute raised";
+      escrow.disputeReason =
+        String(disputeReason || "").trim() || "Dispute raised";
       escrow.disputeRaisedBy = userId as any;
       escrow.disputeRaisedAt = new Date();
       await escrow.save();
@@ -572,12 +695,18 @@ export async function POST(request: NextRequest) {
     // ── RESOLVE DISPUTE: REFUND ────────────────────────────────────────────────
     if (action === "resolve_dispute_refund") {
       if (!isAdmin) {
-        return NextResponse.json({ error: "Only admin can resolve dispute with refund." }, { status: 403 });
+        return NextResponse.json(
+          { error: "Only admin can resolve dispute with refund." },
+          { status: 403 }
+        );
       }
 
       const amount = Number(escrow.amountEth || 0);
       if (amount > 0) {
-        await User.updateOne({ _id: escrow.ownerId }, { $inc: { offchainBalance: amount } });
+        await User.updateOne(
+          { _id: escrow.ownerId },
+          { $inc: { offchainBalance: amount } }
+        );
 
         await WalletTransaction.create({
           fromUserId: userId as any,
@@ -614,7 +743,10 @@ export async function POST(request: NextRequest) {
     // ── RESOLVE DISPUTE: RELEASE ───────────────────────────────────────────────
     if (action === "resolve_dispute_release") {
       if (!isAdmin) {
-        return NextResponse.json({ error: "Only admin can resolve dispute with release." }, { status: 403 });
+        return NextResponse.json(
+          { error: "Only admin can resolve dispute with release." },
+          { status: 403 }
+        );
       }
 
       escrow.adminReleaseApproved = true;

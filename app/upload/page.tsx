@@ -4,84 +4,40 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Navbar } from "@/components/navbar";
 import { UploadForm } from "@/components/upload-form";
-import Loading from "./loading"; // Import the new Loading component
+import Loading from "./loading";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Clock, Search, Eye } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CheckCircle2, Clock, Search, Eye, AlertTriangle, ExternalLink } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
-// Auth guard hook
 function useAuthGuard() {
-  const router = useRouter()
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const router = useRouter();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const res = await fetch('/api/auth/me', {
-          credentials: 'include'
-        })
-
-        if (!res.ok) {
-          router.push('/signin')
-          return
-        }
-
-        setIsAuthenticated(true)
+        const res = await fetch("/api/auth/me", { credentials: "include" });
+        if (!res.ok) { router.push("/signin"); return; }
+        setIsAuthenticated(true);
       } catch {
-        router.push('/signin')
+        router.push("/signin");
       }
-    }
+    };
+    checkAuth();
+  }, [router]);
 
-    checkAuth()
-  }, [router])
-
-  return isAuthenticated
+  return isAuthenticated;
 }
 
-// Mock API function for backend integration
-async function analyzeImage(file: File, itemType: string) {
-  // In production, replace with actual API endpoint
-  const apiUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-
-  try {
-    const formData = new FormData();
-    formData.append("image", file);
-    formData.append("itemType", itemType);
-
-    const response = await fetch(`${apiUrl}/upload`, {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!response.ok) {
-      throw new Error("Upload failed");
-    }
-
-    return await response.json();
-  } catch (error) {
-    // Mock response for development/testing
-    console.warn(
-      "Backend unavailable, using mock data. Connect your backend via NEXT_PUBLIC_BACKEND_URL"
-    );
-
-    // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    return {
-      detected_item: ["wallet", "phone", "keys", "backpack"][
-        Math.floor(Math.random() * 4)
-      ],
-      match_score: Math.floor(Math.random() * 40) + 60, // 60-100%
-      status: ["High Match Found", "Possible Match", "No Match Found"][
-        Math.floor(Math.random() * 3)
-      ],
-      tx_hash: `0x${Array.from({ length: 40 }, () =>
-        Math.floor(Math.random() * 16).toString(16)
-      ).join("")}`,
-    };
-  }
+interface DuplicateWarning {
+  error: string;
+  existingItemId: string;
+  existingItemType: string;
+  existingDescription: string;
+  matchScore: number;
 }
 
 interface RecentUpload {
@@ -106,9 +62,7 @@ function RecentUploads() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success) {
-          setUploads(data.items.slice(0, 3));
-        }
+        if (data.success) setUploads(data.items.slice(0, 3));
       }
     } catch (err) {
       console.error("Error fetching recent uploads:", err);
@@ -119,7 +73,7 @@ function RecentUploads() {
 
   useEffect(() => {
     fetchRecent();
-    const interval = setInterval(fetchRecent, 10000); // Poll every 10 seconds
+    const interval = setInterval(fetchRecent, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -155,8 +109,10 @@ function RecentUploads() {
               <CardContent className="p-4">
                 <p className="font-medium text-sm line-clamp-1 mb-2">{upload.description}</p>
                 <div className="flex items-center justify-between">
-                  <Badge variant={upload.status === "matched" ? "default" : "secondary"} 
-                    className={upload.status === "matched" ? "bg-green-500 hover:bg-green-600" : ""}>
+                  <Badge
+                    variant={upload.status === "matched" ? "default" : "secondary"}
+                    className={upload.status === "matched" ? "bg-green-500 hover:bg-green-600" : ""}
+                  >
                     {upload.status === "matched" ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <Clock className="w-3 h-3 mr-1" />}
                     <span className="capitalize">{upload.status}</span>
                   </Badge>
@@ -177,15 +133,12 @@ function UploadPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [duplicateWarning, setDuplicateWarning] = useState<DuplicateWarning | null>(null);
   const isAuthenticated = useAuthGuard();
 
   const itemType = searchParams.get("type") || "lost";
 
-  // Show loading while checking auth
-  if (isAuthenticated === null) {
-    return <Loading />;
-  }
+  if (isAuthenticated === null) return <Loading />;
 
   const handleSubmit = async (
     file: File,
@@ -197,25 +150,18 @@ function UploadPageContent() {
     rewardPaymentMethod?: "offchain" | "onchain"
   ) => {
     setIsLoading(true);
+    setDuplicateWarning(null);
+
     try {
       const reader = new FileReader();
       reader.onloadend = async () => {
-        setImagePreview(reader.result as string);
-
-        // Call real API
         const formData = new FormData();
         formData.append("image", file);
         formData.append("description", description);
         formData.append("type", type);
-        if (rewardAmount) {
-          formData.append("rewardAmount", rewardAmount.toString());
-        }
-        if (rewardPaymentMethod) {
-          formData.append("rewardPaymentMethod", rewardPaymentMethod);
-        }
-        if (contactPhone && contactPhone.trim()) {
-          formData.append("contactPhone", contactPhone.trim());
-        }
+        if (rewardAmount) formData.append("rewardAmount", rewardAmount.toString());
+        if (rewardPaymentMethod) formData.append("rewardPaymentMethod", rewardPaymentMethod);
+        if (contactPhone && contactPhone.trim()) formData.append("contactPhone", contactPhone.trim());
         if (location) {
           formData.append("latitude", location.lat.toString());
           formData.append("longitude", location.lng.toString());
@@ -225,25 +171,27 @@ function UploadPageContent() {
           const response = await fetch("/api/upload", {
             method: "POST",
             body: formData,
-            credentials: "include", //  IMPORTANT
+            credentials: "include",
           });
 
           const result = await response.json();
 
           if (!response.ok) {
             if (response.status === 409) {
-              // Custom handling for duplicates
-              if (confirm(`${result.error}\n\nWould you like to view the existing item instead?`)) {
-                router.push(`/item/${result.existingItemId}`);
-                return;
-              }
+              // Show inline duplicate warning instead of browser confirm()
+              setDuplicateWarning({
+                error: result.error,
+                existingItemId: result.existingItemId,
+                existingItemType: result.existingItemType || "unknown",
+                existingDescription: result.existingDescription || "Similar item",
+                matchScore: result.matchScore || 0,
+              });
               setIsLoading(false);
               return;
             }
             throw new Error(result.error || "Upload failed");
           }
 
-          // Store result in session storage for result page
           sessionStorage.setItem(
             "analysisResult",
             JSON.stringify({
@@ -284,7 +232,7 @@ function UploadPageContent() {
           <div className="mt-4 flex items-center justify-center gap-3">
             <button
               type="button"
-              onClick={() => router.push("/upload?type=lost")}
+              onClick={() => { setDuplicateWarning(null); router.push("/upload?type=lost"); }}
               className={`rounded-md px-4 py-2 text-sm font-medium border ${
                 itemType === "lost"
                   ? "bg-red-600 text-white border-red-600"
@@ -295,7 +243,7 @@ function UploadPageContent() {
             </button>
             <button
               type="button"
-              onClick={() => router.push("/upload?type=found")}
+              onClick={() => { setDuplicateWarning(null); router.push("/upload?type=found"); }}
               className={`rounded-md px-4 py-2 text-sm font-medium border ${
                 itemType === "found"
                   ? "bg-green-600 text-white border-green-600"
@@ -306,6 +254,52 @@ function UploadPageContent() {
             </button>
           </div>
         </div>
+
+        {/* Duplicate Warning Banner */}
+        {duplicateWarning && (
+          <div className="w-full max-w-2xl mb-6 rounded-xl border border-amber-400 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-600 p-5">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-3">
+                <div>
+                  <p className="font-semibold text-amber-800 dark:text-amber-200">
+                    Similar Item Already Registered
+                  </p>
+                  <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                    {duplicateWarning.error}
+                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                    Match confidence: {duplicateWarning.matchScore}%
+                  </p>
+                </div>
+                <div className="p-3 bg-white dark:bg-black/30 rounded-lg border border-amber-200 dark:border-amber-700 text-sm">
+                  <p className="text-xs text-amber-600 dark:text-amber-400 uppercase font-semibold mb-1">
+                    Existing item ({duplicateWarning.existingItemType})
+                  </p>
+                  <p className="text-amber-900 dark:text-amber-100">{duplicateWarning.existingDescription}</p>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    onClick={() => router.push(`/item/${duplicateWarning.existingItemId}`)}
+                    size="sm"
+                    className="bg-amber-600 hover:bg-amber-700 text-white gap-1"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    View Existing Item
+                  </Button>
+                  <Button
+                    onClick={() => setDuplicateWarning(null)}
+                    size="sm"
+                    variant="outline"
+                    className="border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300"
+                  >
+                    Upload Anyway
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <UploadForm
           onSubmit={handleSubmit}
@@ -322,10 +316,7 @@ function UploadPageContent() {
 export default function UploadPage() {
   return (
     <Suspense fallback={<Loading />}>
-      {" "}
-      {/* Use the new Loading component */}
       <UploadPageContent />
     </Suspense>
   );
 }
-
