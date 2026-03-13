@@ -226,7 +226,9 @@ export default function ItemDetailsPage() {
         </Card>
 
         {/* Three-Layer Escrow Panel */}
-        <EscrowPanel itemId={id} />
+        <div id="escrow-section">
+          <EscrowPanel itemId={id} />
+        </div>
 
         <Card>
           <CardHeader>

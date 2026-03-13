@@ -257,7 +257,9 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
       cache: "no-store",
     });
     if (!itemRes.ok)
-      throw new Error("Could not fetch item details for on-chain registration.");
+      throw new Error(
+        "Could not fetch item details for on-chain registration."
+      );
     const itemData = await itemRes.json();
     const item = itemData.item || itemData;
 
@@ -277,8 +279,14 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
         onChainItem.reporterAddress.toLowerCase()
       ) {
         throw new Error(
-          `Wallet mismatch. Connected: ${signerAddress.slice(0, 6)}...${signerAddress.slice(-4)}, ` +
-            `expected: ${onChainItem.reporterAddress.slice(0, 6)}...${onChainItem.reporterAddress.slice(-4)}. ` +
+          `Wallet mismatch. Connected: ${signerAddress.slice(
+            0,
+            6
+          )}...${signerAddress.slice(-4)}, ` +
+            `expected: ${onChainItem.reporterAddress.slice(
+              0,
+              6
+            )}...${onChainItem.reporterAddress.slice(-4)}. ` +
             `Switch to the correct account in MetaMask.`
         );
       }
@@ -299,14 +307,13 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
 
     // ── Step 3: Register the item on-chain for the first time ─────────────
     // Build minimal on-chain metadata
-    const qrCodeHash = item.qrCodeHash || ethers.keccak256(ethers.toUtf8Bytes(itemId));
+    const qrCodeHash =
+      item.qrCodeHash || ethers.keccak256(ethers.toUtf8Bytes(itemId));
     const latitude = Math.round((item.latitude ?? 0) * 1e6);
     const longitude = Math.round((item.longitude ?? 0) * 1e6);
     const description = item.description ?? "";
     const metadataURI = item.metadataURI ?? "";
-    const secretHash = item.secretHash
-      ? item.secretHash
-      : ethers.ZeroHash;
+    const secretHash = item.secretHash ? item.secretHash : ethers.ZeroHash;
 
     const registerTx = await contract.registerItem(
       itemId,
@@ -352,12 +359,17 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
 
     // Verify signer is the on-chain reporter
     if (
-      signerAddress.toLowerCase() !==
-      onChainItem.reporterAddress.toLowerCase()
+      signerAddress.toLowerCase() !== onChainItem.reporterAddress.toLowerCase()
     ) {
       throw new Error(
-        `Wallet mismatch. Connected: ${signerAddress.slice(0, 6)}...${signerAddress.slice(-4)}, ` +
-          `expected reporter: ${onChainItem.reporterAddress.slice(0, 6)}...${onChainItem.reporterAddress.slice(-4)}. ` +
+        `Wallet mismatch. Connected: ${signerAddress.slice(
+          0,
+          6
+        )}...${signerAddress.slice(-4)}, ` +
+          `expected reporter: ${onChainItem.reporterAddress.slice(
+            0,
+            6
+          )}...${onChainItem.reporterAddress.slice(-4)}. ` +
           `Switch to the correct account in MetaMask and try again.`
       );
     }
@@ -445,6 +457,15 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
         router.push(`/chat/${data.conversationId}`);
         return;
       }
+      if (action === "assign_finder") {
+        await fetchEscrow();
+        setTimeout(() => {
+          document
+            .getElementById("escrow-section")
+            ?.scrollIntoView({ behavior: "smooth" });
+        }, 300);
+        return;
+      }
 
       if (data.released === true) {
         setEscrow((prev) =>
@@ -469,9 +490,7 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
     if (ms <= 0) return "Available now";
 
     const days = Math.floor(ms / (1000 * 60 * 60 * 24));
-    const hours = Math.floor(
-      (ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
-    );
+    const hours = Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
     const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
 
     if (days > 0) return `${days}d ${hours}h`;
@@ -594,8 +613,7 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
   }
 
   const stateConfig = STATE_CONFIG[escrow.state];
-  const isClosed =
-    escrow.state === "released" || escrow.state === "refunded";
+  const isClosed = escrow.state === "released" || escrow.state === "refunded";
   const isDisputed = escrow.state === "disputed";
 
   return (
@@ -685,8 +703,7 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
           {meta?.isOwner && escrow.state === "claim_assigned" && (
             <div className="p-3 bg-blue-500/20 border border-blue-500/40 rounded space-y-2">
               <p className="text-blue-200 text-sm">
-                Finder assigned:{" "}
-                <strong>{escrow.finderId?.fullName}</strong>
+                Finder assigned: <strong>{escrow.finderId?.fullName}</strong>
               </p>
               <p className="text-slate-400 text-xs">
                 Click below to notify the finder to begin delivery.
@@ -1020,8 +1037,7 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
             ) : (
               <div className="p-3 bg-red-500/20 border border-red-500/50 rounded">
                 <p className="text-red-200 text-sm">
-                  Dispute raised:{" "}
-                  {escrow.disputeReason || "No reason provided"}
+                  Dispute raised: {escrow.disputeReason || "No reason provided"}
                 </p>
                 <p className="text-red-300 text-xs mt-1">
                   Waiting for admin resolution...
