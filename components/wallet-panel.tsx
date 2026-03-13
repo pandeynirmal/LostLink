@@ -6,10 +6,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-// Helper function to validate transaction hash format
 function isValidTxHash(hash: string | null | undefined): boolean {
-  if (!hash || typeof hash !== 'string') return false;
+  if (!hash || typeof hash !== "string") return false;
   return /^0x[a-fA-F0-9]{64}$/.test(hash);
+}
+
+function etherscanUrl(txHash: string): string {
+  return `https://sepolia.etherscan.io/tx/${txHash}`;
 }
 
 type WalletData = {
@@ -39,16 +42,8 @@ type WalletTx = {
   createdAt: string;
   itemDescription: string;
   direction: "sent" | "received";
-  from: {
-    fullName: string;
-    email: string;
-    address: string;
-  };
-  to: {
-    fullName: string;
-    email: string;
-    address: string;
-  };
+  from: { fullName: string; email: string; address: string };
+  to: { fullName: string; email: string; address: string };
 };
 
 type WalletSummary = {
@@ -95,12 +90,10 @@ export function WalletPanel() {
         cache: "no-store",
       });
       const data = await response.json();
-
       if (!response.ok) {
         setError(data.error || "Failed to load wallet");
         return;
       }
-
       setWallet(data.wallet);
       setSummary(data.summary || null);
       setTransactions(data.transactions || []);
@@ -118,8 +111,6 @@ export function WalletPanel() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-
-    // Auto-detect previously authorized MetaMask account on mount.
     setHasMetaMask(Boolean(window.ethereum));
     void refreshMetaMaskState();
 
@@ -128,24 +119,16 @@ export function WalletPanel() {
       void fetchWallet();
       void refreshMetaMaskState();
     };
-
     const interval = setInterval(tick, 10000);
-
-    const handleFocus = () => {
-      tick();
-    };
-
-    window.addEventListener("focus", handleFocus);
-
+    window.addEventListener("focus", tick);
     return () => {
       clearInterval(interval);
-      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("focus", tick);
     };
   }, []);
 
   useEffect(() => {
     if (!window.ethereum?.on) return;
-
     const handleAccountsChanged = async (accounts: string[]) => {
       if (!accounts || accounts.length === 0) {
         setMetaMaskAddress("");
@@ -155,14 +138,11 @@ export function WalletPanel() {
       }
       await refreshMetaMaskState(accounts[0]);
     };
-
     const handleChainChanged = async () => {
       await refreshMetaMaskState(metaMaskAddress || undefined);
     };
-
     window.ethereum.on("accountsChanged", handleAccountsChanged);
     window.ethereum.on("chainChanged", handleChainChanged);
-
     return () => {
       window.ethereum?.removeListener?.("accountsChanged", handleAccountsChanged);
       window.ethereum?.removeListener?.("chainChanged", handleChainChanged);
@@ -173,18 +153,16 @@ export function WalletPanel() {
     if (!window.ethereum) return;
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
-      const address = addressInput || (await provider.send("eth_accounts", []))?.[0] || "";
-
+      const address =
+        addressInput || (await provider.send("eth_accounts", []))?.[0] || "";
       if (!address) {
         setMetaMaskAddress("");
         setMetaMaskBalance("");
         setMetaMaskNetwork("");
         return;
       }
-
       const balanceWei = await provider.getBalance(address);
       const network = await provider.getNetwork();
-
       setMetaMaskAddress(address);
       setMetaMaskBalance(ethers.formatEther(balanceWei));
       setMetaMaskNetwork(network.name || `chain-${network.chainId.toString()}`);
@@ -197,24 +175,38 @@ export function WalletPanel() {
 
   const connectMetaMask = async () => {
     setMetaMaskError("");
-
     try {
       if (!window.ethereum) {
-        setMetaMaskError("MetaMask not detected in browser.");
+        setMetaMaskError(
+          "MetaMask not detected. Please install the MetaMask browser extension."
+        );
         return;
       }
-
       const provider = new ethers.BrowserProvider(window.ethereum);
       const accounts = await provider.send("eth_requestAccounts", []);
-
       if (!accounts || accounts.length === 0) {
         setMetaMaskError("No MetaMask account connected.");
         return;
       }
-
       await refreshMetaMaskState(accounts[0]);
-    } catch {
-      setMetaMaskError("Failed to connect MetaMask.");
+
+      // Save wallet address to backend so on-chain escrow release works
+      try {
+        await fetch("/api/wallet", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ walletAddress: accounts[0] }),
+        });
+      } catch {
+        // Non-critical
+      }
+    } catch (err: any) {
+      if (err?.code === 4001) {
+        setMetaMaskError("Connection rejected. Please approve in MetaMask.");
+      } else {
+        setMetaMaskError("Failed to connect MetaMask.");
+      }
     }
   };
 
@@ -223,8 +215,6 @@ export function WalletPanel() {
     setMetaMaskAddress("");
     setMetaMaskBalance("");
     setMetaMaskNetwork("");
-
-    // Best-effort permission revoke (not supported in all MetaMask versions).
     try {
       if (window.ethereum?.request) {
         await window.ethereum.request({
@@ -233,7 +223,7 @@ export function WalletPanel() {
         });
       }
     } catch {
-      // Ignore revoke errors; UI state is still disconnected for this app session.
+      // Ignore revoke errors
     }
   };
 
@@ -244,7 +234,6 @@ export function WalletPanel() {
       setFundMessage("Enter a valid amount greater than 0.");
       return;
     }
-
     setFunding(true);
     try {
       const res = await fetch("/api/wallet/fund", {
@@ -253,14 +242,12 @@ export function WalletPanel() {
         credentials: "include",
         body: JSON.stringify({ amountEth: amount }),
       });
-
       const data = await res.json();
       if (!res.ok) {
         setFundMessage(data.error || "Failed to load funds.");
         setFunding(false);
         return;
       }
-
       setFundMessage(data.message || "Funds loaded.");
       await fetchWallet();
     } catch {
@@ -273,22 +260,18 @@ export function WalletPanel() {
   const handleLoadFundsViaMetaMask = async () => {
     setFundMessage("");
     const amount = Number(fundAmount);
-
     if (!Number.isFinite(amount) || amount <= 0) {
       setFundMessage("Enter a valid amount greater than 0.");
       return;
     }
-
     if (!wallet?.address) {
       setFundMessage("Project wallet address not available.");
       return;
     }
-
     if (!window.ethereum) {
       setFundMessage("MetaMask not detected in browser.");
       return;
     }
-
     setFundingViaMetaMask(true);
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
@@ -298,12 +281,12 @@ export function WalletPanel() {
         to: wallet.address,
         value: ethers.parseEther(amount.toString()),
       });
-
       await tx.wait();
       setFundMessage(`Loaded ${amount} ETH via MetaMask. Tx: ${tx.hash}`);
       await Promise.all([fetchWallet(), refreshMetaMaskState(fromAddress)]);
     } catch (error) {
-      const message = (error as { message?: string })?.message || "MetaMask funding failed.";
+      const message =
+        (error as { message?: string })?.message || "MetaMask funding failed.";
       if (message.toLowerCase().includes("insufficient funds")) {
         setFundMessage("MetaMask balance is not enough for amount + gas.");
       } else {
@@ -320,7 +303,6 @@ export function WalletPanel() {
         resolve(true);
         return;
       }
-
       const script = document.createElement("script");
       script.src = "https://checkout.razorpay.com/v1/checkout.js";
       script.async = true;
@@ -331,13 +313,11 @@ export function WalletPanel() {
 
   const handleTopupViaRazorpay = async () => {
     setFundMessage("");
-
     const inr = Number(topupInr);
     if (!Number.isFinite(inr) || inr <= 0) {
       setFundMessage("Enter a valid top-up amount in INR.");
       return;
     }
-
     setToppingUpRazorpay(true);
     try {
       const scriptLoaded = await loadRazorpayScript();
@@ -346,7 +326,6 @@ export function WalletPanel() {
         setToppingUpRazorpay(false);
         return;
       }
-
       const orderRes = await fetch("/api/wallet/topup/order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -359,7 +338,6 @@ export function WalletPanel() {
         setToppingUpRazorpay(false);
         return;
       }
-
       const options = {
         key: orderData.keyId,
         amount: orderData.amountPaise,
@@ -382,7 +360,9 @@ export function WalletPanel() {
             });
             const verifyData = await verifyRes.json();
             if (!verifyRes.ok || !verifyData.success) {
-              setFundMessage(verifyData.error || "Razorpay payment verification failed.");
+              setFundMessage(
+                verifyData.error || "Razorpay payment verification failed."
+              );
               return;
             }
             setFundMessage(verifyData.message || "Top-up successful.");
@@ -398,11 +378,8 @@ export function WalletPanel() {
             setToppingUpRazorpay(false);
           },
         },
-        theme: {
-          color: "#06b6d4",
-        },
+        theme: { color: "#06b6d4" },
       };
-
       const razorpay = new window.Razorpay(options);
       razorpay.open();
     } catch {
@@ -413,12 +390,17 @@ export function WalletPanel() {
 
   return (
     <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black/90 shadow-xl p-5 sm:p-8 transition-colors duration-300">
-      {loading && <p className="text-neutral-600 dark:text-neutral-200">Loading wallet...</p>}
-      {!loading && error && <p className="text-red-500 dark:text-red-400">{error}</p>}
+      {loading && (
+        <p className="text-neutral-600 dark:text-neutral-200">Loading wallet...</p>
+      )}
+      {!loading && error && (
+        <p className="text-red-500 dark:text-red-400">{error}</p>
+      )}
 
       {!loading && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="space-y-6">
+            {/* Ethereum Status */}
             <Card className="border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-black dark:text-white">
               <CardHeader>
                 <CardTitle>Ethereum Status</CardTitle>
@@ -427,9 +409,25 @@ export function WalletPanel() {
                 <p>
                   <strong>Project Wallet:</strong> {wallet?.address || "-"}
                 </p>
+                {wallet?.address && (
+                  <p>
+                    <a
+                      href={`https://sepolia.etherscan.io/address/${wallet.address}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-violet-600 dark:text-violet-300 underline text-xs"
+                    >
+                      View on Sepolia Etherscan ↗
+                    </a>
+                  </p>
+                )}
                 <div className="p-3 bg-white dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-700 mt-2">
-                  <p className="text-neutral-500 dark:text-neutral-300 text-xs uppercase tracking-wide mb-1">On‑chain Custodial Balance</p>
-                  <p className="text-2xl font-semibold text-black dark:text-white">{(wallet?.balanceEth || "0.0000").slice(0, 6)} ETH</p>
+                  <p className="text-neutral-500 dark:text-neutral-300 text-xs uppercase tracking-wide mb-1">
+                    On‑chain Custodial Balance
+                  </p>
+                  <p className="text-2xl font-semibold text-black dark:text-white">
+                    {(wallet?.balanceEth || "0.0000").slice(0, 6)} ETH
+                  </p>
                   <p className="text-neutral-400 text-xs mt-1 italic">
                     This is auto‑granted gas money, not your system‑loaded funds.
                   </p>
@@ -440,6 +438,7 @@ export function WalletPanel() {
               </CardContent>
             </Card>
 
+            {/* Load Funds */}
             <Card className="border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-black dark:text-white">
               <CardHeader>
                 <CardTitle>Load Funds for Payment</CardTitle>
@@ -473,7 +472,9 @@ export function WalletPanel() {
                   </Button>
                 </div>
                 <div className="space-y-2 border border-neutral-200 dark:border-neutral-700 rounded p-3 bg-white dark:bg-neutral-800">
-                  <p className="text-neutral-800 dark:text-neutral-200 font-medium">Mobile Top‑up (Razorpay Sandbox)</p>
+                  <p className="text-neutral-800 dark:text-neutral-200 font-medium">
+                    Mobile Top‑up (Razorpay Sandbox)
+                  </p>
                   <div className="flex gap-2">
                     <Input
                       type="number"
@@ -501,10 +502,13 @@ export function WalletPanel() {
                     MetaMask is optional. You can still use "Load Funds (System)" and normal app flows.
                   </p>
                 )}
-                {fundMessage && <p className="text-sm text-neutral-700 dark:text-neutral-200">{fundMessage}</p>}
+                {fundMessage && (
+                  <p className="text-sm text-neutral-700 dark:text-neutral-200">{fundMessage}</p>
+                )}
               </CardContent>
             </Card>
 
+            {/* MetaMask */}
             <Card className="border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-black dark:text-white">
               <CardHeader>
                 <CardTitle>MetaMask (Optional)</CardTitle>
@@ -520,14 +524,34 @@ export function WalletPanel() {
                   </Button>
                 ) : (
                   <p className="text-neutral-600 dark:text-neutral-300">
-                    MetaMask extension not detected. The app still works without it.
+                    MetaMask extension not detected.{" "}
+                    <a
+                      href="https://metamask.io/download/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-violet-600 dark:text-violet-300 underline"
+                    >
+                      Install MetaMask ↗
+                    </a>
                   </p>
                 )}
-                {metaMaskError && <p className="text-red-500 dark:text-red-300">{metaMaskError}</p>}
+                {metaMaskError && (
+                  <p className="text-red-500 dark:text-red-300">{metaMaskError}</p>
+                )}
                 {metaMaskAddress && (
                   <>
                     <p>
                       <strong>Address:</strong> {metaMaskAddress}
+                    </p>
+                    <p>
+                      <a
+                        href={`https://sepolia.etherscan.io/address/${metaMaskAddress}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-violet-600 dark:text-violet-300 underline text-xs"
+                      >
+                        View on Sepolia Etherscan ↗
+                      </a>
                     </p>
                     <p>
                       <strong>Balance:</strong> {metaMaskBalance} ETH
@@ -535,6 +559,12 @@ export function WalletPanel() {
                     <p>
                       <strong>Network:</strong> {metaMaskNetwork}
                     </p>
+                    {metaMaskNetwork &&
+                      !metaMaskNetwork.toLowerCase().includes("sepolia") && (
+                        <p className="text-amber-500 text-xs">
+                          ⚠️ Switch MetaMask to Sepolia testnet for on-chain features to work.
+                        </p>
+                      )}
                   </>
                 )}
               </CardContent>
@@ -542,19 +572,23 @@ export function WalletPanel() {
           </div>
 
           <div className="space-y-6">
+            {/* Off-chain wallet */}
             <Card className="border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-black dark:text-white">
               <CardHeader>
                 <CardTitle>Normal Wallet (Off-chain / Razorpay)</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 <div className="p-3 bg-white dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-700 mb-3">
-                  <p className="text-neutral-500 dark:text-neutral-300 text-xs uppercase tracking-wide mb-1">System Load Balance</p>
-                  <p className="text-2xl font-bold text-black dark:text-white">{(wallet?.offchainBalance ?? 0).toFixed(4)} ETH</p>
+                  <p className="text-neutral-500 dark:text-neutral-300 text-xs uppercase tracking-wide mb-1">
+                    System Load Balance
+                  </p>
+                  <p className="text-2xl font-bold text-black dark:text-white">
+                    {(wallet?.offchainBalance ?? 0).toFixed(4)} ETH
+                  </p>
                   <p className="text-neutral-400 text-xs mt-1">
                     Funds added via "Load Funds (System)" appear here.
                   </p>
                 </div>
-                
                 <div className="p-3 bg-indigo-50 dark:bg-indigo-950/30 rounded-lg border border-indigo-100 dark:border-indigo-900/50 mb-3">
                   <p className="text-indigo-600 dark:text-indigo-400 text-xs uppercase tracking-wide font-semibold mb-1 flex items-center gap-1">
                     <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
@@ -562,7 +596,9 @@ export function WalletPanel() {
                     </svg>
                     On-chain Reputation
                   </p>
-                  <p className="text-2xl font-bold text-indigo-700 dark:text-indigo-300">{wallet?.reputation ?? 0}</p>
+                  <p className="text-2xl font-bold text-indigo-700 dark:text-indigo-300">
+                    {wallet?.reputation ?? 0}
+                  </p>
                   <p className="text-indigo-500/70 dark:text-indigo-400/50 text-xs mt-1">
                     Verifiable trust score earned through successful returns.
                   </p>
@@ -576,6 +612,7 @@ export function WalletPanel() {
               </CardContent>
             </Card>
 
+            {/* Combined status */}
             <Card className="border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-black dark:text-white">
               <CardHeader>
                 <CardTitle>Combined Account Status</CardTitle>
@@ -596,14 +633,17 @@ export function WalletPanel() {
         </div>
       )}
 
+      {/* Transaction History */}
       {!loading && (
         <Card className="mt-6 border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-black dark:text-white">
           <CardHeader>
-            <CardTitle>Transactions</CardTitle>
+            <CardTitle>Transaction History</CardTitle>
           </CardHeader>
           <CardContent>
             {transactions.length === 0 ? (
-              <p className="text-sm text-neutral-500 dark:text-neutral-400">No transactions yet.</p>
+              <p className="text-sm text-neutral-500 dark:text-neutral-400">
+                No transactions yet.
+              </p>
             ) : (
               <div className="space-y-4">
                 {transactions.map((tx) => (
@@ -614,115 +654,104 @@ export function WalletPanel() {
                     <p>
                       <strong>Method:</strong>{" "}
                       {tx.paymentMethod === "onchain"
-                        ? "On-chain transfer (custodial)"
+                        ? "On-chain (Smart Contract)"
                         : tx.paymentMethod === "offchain"
                         ? "Off-chain escrow release"
                         : tx.paymentMethod === "metamask"
                         ? "MetaMask on-chain transfer"
-                        : "Razorpay + on-chain anchor"}
-                    </p>
-                    <p>
-                      <strong>{tx.direction === "sent" ? "Sent" : "Received"}:</strong>{" "}
-                      {tx.amountEth} ETH
+                        : "Razorpay + blockchain anchor"}
                     </p>
                     <p>
                       <strong>
-                        {tx.paymentMethod === "razorpay" ? "External Payment ID" : "Tx Hash"}:
+                        {tx.direction === "sent" ? "Sent" : "Received"}:
                       </strong>{" "}
-                      {tx.txHash}
+                      {tx.amountEth} ETH
+                    </p>
+
+                    {/* Main tx hash */}
+                    <p>
+                      <strong>
+                        {tx.paymentMethod === "razorpay"
+                          ? "External Payment ID"
+                          : "Tx Hash"}
+                        :
+                      </strong>{" "}
+                      <span className="font-mono text-xs break-all">{tx.txHash}</span>
                       {tx.paymentMethod === "offchain" && (
-                        <span className="text-neutral-500 dark:text-neutral-400 text-xs ml-2">(Off‑chain transfer)</span>
-                      )}
-                      {!tx.txAvailableOnCurrentRpc && tx.paymentMethod !== "offchain" && !isValidTxHash(tx.txHash) && (
-                        <span className="text-red-500 dark:text-red-300 text-xs ml-2">(Invalid format)</span>
+                        <span className="text-neutral-500 dark:text-neutral-400 text-xs ml-2">
+                          (Off‑chain transfer)
+                        </span>
                       )}
                     </p>
+
+                    {/* Etherscan link for on-chain hashes */}
                     {(tx.paymentMethod === "onchain" || tx.paymentMethod === "metamask") &&
-                      isValidTxHash(tx.txHash) &&
-                      tx.txAvailableOnCurrentRpc && (
-                      <p>
-                        <a
-                          href={`/tx/${tx.txHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-violet-600 dark:text-violet-300 underline"
-                        >
-                          Verify on current RPC
-                        </a>
-                      </p>
-                    )}
-                    {(tx.paymentMethod === "onchain" || tx.paymentMethod === "metamask") &&
-                      isValidTxHash(tx.txHash) &&
-                      tx.txAvailableOnCurrentRpc === false && (
-                        <p className="text-amber-600 dark:text-amber-300 text-xs">
-                          This hash is valid but not found on current RPC (network mismatch or old chain data).
+                      isValidTxHash(tx.txHash) && (
+                        <p>
+                          <a
+                            href={tx.explorerTxUrl || etherscanUrl(tx.txHash)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-violet-600 dark:text-violet-300 underline text-xs"
+                          >
+                            🔍 Verify on Sepolia Etherscan ↗
+                          </a>
                         </p>
                       )}
-                    {(tx.paymentMethod === "onchain" || tx.paymentMethod === "metamask") && !isValidTxHash(tx.txHash) && (
-                      <p className="text-red-500 dark:text-red-300 text-xs">
-                         This transaction hash cannot be verified (corrupted or incomplete)
-                      </p>
-                    )}
+                    {(tx.paymentMethod === "onchain" || tx.paymentMethod === "metamask") &&
+                      !isValidTxHash(tx.txHash) && (
+                        <p className="text-red-500 dark:text-red-300 text-xs">
+                          ⚠ Transaction hash cannot be verified (corrupted or incomplete)
+                        </p>
+                      )}
+
+                    {/* Anchor tx (Razorpay) */}
                     {tx.paymentMethod === "razorpay" && tx.anchorTxHash && (
-                      <p>
-                        <strong>Anchor Tx:</strong> {tx.anchorTxHash}
-                        {!isValidTxHash(tx.anchorTxHash) && (
-                          <span className="text-red-500 dark:text-red-300 text-xs ml-2">(Invalid format)</span>
+                      <>
+                        <p>
+                          <strong>Blockchain Anchor Tx:</strong>{" "}
+                          <span className="font-mono text-xs break-all">{tx.anchorTxHash}</span>
+                        </p>
+                        {isValidTxHash(tx.anchorTxHash) && (
+                          <p>
+                            <a
+                              href={tx.anchorExplorerTxUrl || etherscanUrl(tx.anchorTxHash)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-violet-600 dark:text-violet-300 underline text-xs"
+                            >
+                              🔍 Verify anchor on Sepolia Etherscan ↗
+                            </a>
+                          </p>
                         )}
-                      </p>
+                      </>
                     )}
+
+                    {/* Settlement proof */}
                     {tx.settlementProofTxHash && (
-                      <p>
-                        <strong>Settlement Proof:</strong> {tx.settlementProofTxHash}
-                        {!isValidTxHash(tx.settlementProofTxHash) && (
-                          <span className="text-red-500 dark:text-red-300 text-xs ml-2">(Invalid format)</span>
+                      <>
+                        <p>
+                          <strong>Settlement Proof Tx:</strong>{" "}
+                          <span className="font-mono text-xs break-all">{tx.settlementProofTxHash}</span>
+                        </p>
+                        {isValidTxHash(tx.settlementProofTxHash) && (
+                          <p>
+                            <a
+                              href={
+                                tx.settlementProofExplorerTxUrl ||
+                                etherscanUrl(tx.settlementProofTxHash)
+                              }
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-violet-600 dark:text-violet-300 underline text-xs"
+                            >
+                              🔍 Verify settlement proof on Sepolia Etherscan ↗
+                            </a>
+                          </p>
                         )}
-                      </p>
+                      </>
                     )}
-                    {tx.settlementProofTxHash &&
-                      isValidTxHash(tx.settlementProofTxHash) &&
-                      tx.settlementProofTxAvailableOnCurrentRpc && (
-                      <p>
-                        <a
-                          href={`/tx/${tx.settlementProofTxHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-violet-600 dark:text-violet-300 underline"
-                        >
-                          Verify settlement proof on current RPC
-                        </a>
-                      </p>
-                    )}
-                    {tx.settlementProofTxHash &&
-                      isValidTxHash(tx.settlementProofTxHash) &&
-                      tx.settlementProofTxAvailableOnCurrentRpc === false && (
-                        <p className="text-amber-600 dark:text-amber-300 text-xs">
-                          Settlement proof hash is not available on current RPC.
-                        </p>
-                      )}
-                    {tx.paymentMethod === "razorpay" &&
-                      tx.anchorTxHash &&
-                      isValidTxHash(tx.anchorTxHash) &&
-                      tx.anchorTxAvailableOnCurrentRpc && (
-                      <p>
-                        <a
-                          href={`/tx/${tx.anchorTxHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-violet-600 dark:text-violet-300 underline"
-                        >
-                          Verify anchor on current RPC
-                        </a>
-                      </p>
-                    )}
-                    {tx.paymentMethod === "razorpay" &&
-                      tx.anchorTxHash &&
-                      isValidTxHash(tx.anchorTxHash) &&
-                      tx.anchorTxAvailableOnCurrentRpc === false && (
-                        <p className="text-amber-600 dark:text-amber-300 text-xs">
-                          Anchor hash is not available on current RPC.
-                        </p>
-                      )}
+
                     <p>
                       <strong>From:</strong> {tx.from.fullName} ({tx.from.address})
                     </p>
@@ -735,7 +764,8 @@ export function WalletPanel() {
                       </p>
                     )}
                     <p>
-                      <strong>Date:</strong> {new Date(tx.createdAt).toLocaleString()}
+                      <strong>Date:</strong>{" "}
+                      {new Date(tx.createdAt).toLocaleString()}
                     </p>
                   </div>
                 ))}
