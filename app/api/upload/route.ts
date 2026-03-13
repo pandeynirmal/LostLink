@@ -178,6 +178,7 @@ export async function POST(request: NextRequest) {
     let allMatches: Array<{ id: string; score: number; description: string; imageUrl: string }> = [];
 
     if (embedding.length > 0) {
+      console.log('[Upload] Starting AI matching with embedding length:', embedding.length);
       try {
         const { getMatchScore, getTextEmbedding, getCombinedMatchScore } = await import("@/lib/ai-service");
         const oppositeType = itemType === "lost" ? "found" : "lost";
@@ -208,13 +209,22 @@ export async function POST(request: NextRequest) {
                 { image: 0.6, text: 0.4 }
               );
               score = combinedResult.combined_match_score;
-            } catch {
+              console.log(`[Upload] Combined match score for ${candidateItem._id}:`, {
+                combined: score,
+                image: combinedResult.image_match_score,
+                text: combinedResult.text_match_score,
+                description: candidateItem.description.substring(0, 50)
+              });
+            } catch (err) {
+              console.warn('Combined match failed, falling back to image-only:', (err as Error).message);
               const matchResult = await getMatchScore(candidateItem.embedding, embedding);
               score = matchResult.match_score;
+              console.log(`[Upload] Image-only match score for ${candidateItem._id}:`, score);
             }
           } else {
             const matchResult = await getMatchScore(candidateItem.embedding, embedding);
             score = matchResult.match_score;
+            console.log(`[Upload] Basic image match score for ${candidateItem._id}:`, score);
           }
 
           if (score > 0.2) {
@@ -265,12 +275,22 @@ export async function POST(request: NextRequest) {
         matchScore: highestScore,
         ...(blockchainData && { blockchain: { ...blockchainData, action: "match" } }),
       });
+      console.log(`[Upload] Stored match for newItem ${newItem._id}:`, { 
+        matchedTo: (bestMatch as any)._id, 
+        score: highestScore, 
+        scorePercent: Math.round(highestScore * 100) 
+      });
 
       await Item.findByIdAndUpdate((bestMatch as any)._id, {
         status: "matched",
         matchedItemId: newItem._id,
         matchScore: highestScore,
         ...(blockchainData && { blockchain: { ...blockchainData, action: "match" } }),
+      });
+      console.log(`[Upload] Stored match for bestMatch ${(bestMatch as any)._id}:`, { 
+        matchedTo: newItem._id, 
+        score: highestScore, 
+        scorePercent: Math.round(highestScore * 100) 
       });
     }
 
