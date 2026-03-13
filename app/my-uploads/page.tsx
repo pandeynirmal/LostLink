@@ -14,6 +14,7 @@ import { Search, Eye, CheckCircle2, Clock, AlertCircle, Trash2, XCircle, Shield,
 
 interface Upload {
   _id: string;
+  userId: string;
   type: "lost" | "found";
   description: string;
   imageUrl: string;
@@ -111,6 +112,7 @@ export default function MyUploadsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "lost" | "found">("all");
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null); // ← added
   const [verifyTarget, setVerifyTarget] = useState<Upload | null>(null);
   const [verifyMethod, setVerifyMethod] = useState<"onchain" | "razorpay" | "metamask">("onchain");
   const [verifyRewardAmount, setVerifyRewardAmount] = useState<string>("");
@@ -138,19 +140,25 @@ export default function MyUploadsPage() {
 
   const fetchUploads = async () => {
     try {
-      const [response, pendingReqResponse] = await Promise.all([
-        fetch("/api/uploads/my", {
-          credentials: "include",
-        }),
+      const [response, pendingReqResponse, meRes] = await Promise.all([
+        fetch("/api/uploads/my", { credentials: "include" }),
         fetch("/api/contact-request?scope=requester&status=all&limit=200", {
           credentials: "include",
           cache: "no-store",
         }),
+        fetch("/api/auth/me", { credentials: "include", cache: "no-store" }), // ← added
       ]);
 
       if (response.status === 401) {
         router.push("/signin");
         return;
+      }
+
+      // ← added: set current user id
+      if (meRes.ok) {
+        const meData = await meRes.json();
+        const uid = String(meData.user?._id || meData._id || "");
+        setCurrentUserId(uid || null);
       }
 
       const data = await response.json();
@@ -370,9 +378,7 @@ export default function MyUploadsPage() {
 
         const recordRes = await fetch("/api/verify", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           credentials: "include",
           body: JSON.stringify({
             itemId: verifyTarget._id,
@@ -398,9 +404,7 @@ export default function MyUploadsPage() {
 
       const res = await fetch("/api/verify", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
           itemId: verifyTarget._id,
@@ -448,17 +452,12 @@ export default function MyUploadsPage() {
 
       const response = await fetch("/api/contact-request", {
         method: isPendingRequest ? "DELETE" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(
           isPendingRequest
             ? { itemId: upload.matchedItem.id }
-            : {
-                itemId: upload.matchedItem.id,
-                proposedAmount: 0,
-              }
+            : { itemId: upload.matchedItem.id, proposedAmount: 0 }
         ),
       });
 
@@ -503,7 +502,7 @@ export default function MyUploadsPage() {
 
   const handleDeleteUpload = async (e: React.MouseEvent, upload: Upload) => {
     e.stopPropagation();
-    
+
     if (!confirm(`Are you sure you want to delete this upload? \n\nThis will permanently remove the item from our database and delete the associated image to save space. \n\nNote: Any existing blockchain records associated with this item ID (${upload._id}) will remain immutable and permanent on the network.`)) {
       return;
     }
@@ -594,6 +593,7 @@ export default function MyUploadsPage() {
             </Button>
           )}
         </div>
+
         {pageNotice && (
           <Card className="mb-6 border-blue-300 bg-blue-50">
             <CardContent className="py-3 text-blue-800 text-sm">{pageNotice}</CardContent>
@@ -644,7 +644,6 @@ export default function MyUploadsPage() {
                 <CardContent className="p-4">
                   <h3 className="font-semibold mb-2 line-clamp-1">{upload.description}</h3>
 
-                  {/* Link to item page with escrow panel */}
                   <Link
                     href={`/item/${upload._id}`}
                     className="block text-xs text-cyan-600 hover:underline mb-2"
@@ -654,53 +653,56 @@ export default function MyUploadsPage() {
                   </Link>
 
                   {upload.type === "lost" && upload.status === "matched" && !upload.isClaimed && (
-                      <Button
-                        size="sm"
-                        className="w-full bg-green-600 hover:bg-green-700 text-white"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void openVerifyModal(upload);
-                        }}
-                      >
-                        Verify & Pay Reward
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      className="w-full bg-green-600 hover:bg-green-700 text-white"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void openVerifyModal(upload);
+                      }}
+                    >
+                      Verify & Pay Reward
+                    </Button>
+                  )}
 
                   {upload.type === "lost" && upload.status === "matched" && upload.isClaimed && (
-                      <Button
-                        size="sm"
-                        className="w-full bg-gray-400 cursor-not-allowed text-white"
-                        disabled
-                      >
-                        Reward Already Paid
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      className="w-full bg-gray-400 cursor-not-allowed text-white"
+                      disabled
+                    >
+                      Reward Already Paid
+                    </Button>
+                  )}
 
+                  {/* Only show to finder (not the owner of the found item) */}
                   {upload.type === "found" &&
+                    currentUserId !== null &&
+                    upload.userId !== currentUserId &&
                     upload.matchedItem &&
                     (upload.status === "matched" || Number(upload.matchScore || 0) >= 50) &&
                     !upload.isClaimed && (
-                    <Button
-                      size="sm"
-                      className="w-full bg-violet-600 hover:bg-violet-700 text-white mt-2"
-                      disabled={
-                        requestingClaimId === upload._id ||
-                        claimStatusByItemId[upload.matchedItem?.id || ""] === "approved"
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleSendClaimRequest(upload);
-                      }}
-                    >
-                      {requestingClaimId === upload._id
-                        ? "Updating..."
-                        : claimStatusByItemId[upload.matchedItem?.id || ""] === "approved"
-                        ? "Request Already Sent"
-                        : claimStatusByItemId[upload.matchedItem?.id || ""] === "pending"
-                        ? "Claim Requested (Cancel)"
-                        : "Send Claim Request"}
-                    </Button>
-                  )}
+                      <Button
+                        size="sm"
+                        className="w-full bg-violet-600 hover:bg-violet-700 text-white mt-2"
+                        disabled={
+                          requestingClaimId === upload._id ||
+                          claimStatusByItemId[upload.matchedItem?.id || ""] === "approved"
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleSendClaimRequest(upload);
+                        }}
+                      >
+                        {requestingClaimId === upload._id
+                          ? "Updating..."
+                          : claimStatusByItemId[upload.matchedItem?.id || ""] === "approved"
+                          ? "Request Already Sent"
+                          : claimStatusByItemId[upload.matchedItem?.id || ""] === "pending"
+                          ? "Claim Requested (Cancel)"
+                          : "Send Claim Request"}
+                      </Button>
+                    )}
 
                   {upload.isClaimed && (
                     <p className="text-xs text-green-700 mt-2 font-medium">Claimed / Resolved</p>
@@ -826,8 +828,8 @@ export default function MyUploadsPage() {
               <div className={`p-3 rounded-lg text-xs flex gap-2 items-start ${
                 verifyMessage.includes("locked in an active Escrow") || verifyMessage.includes("must be approved")
                   ? "bg-amber-500/10 border border-amber-500/20 text-amber-400"
-                  : verifyReviewState === "pending_admin" 
-                    ? "bg-blue-500/10 border border-blue-500/20 text-blue-400" 
+                  : verifyReviewState === "pending_admin"
+                    ? "bg-blue-500/10 border border-blue-500/20 text-blue-400"
                     : "bg-red-500/10 border border-red-500/20 text-red-400"
               }`}>
                 <AlertCircle className="w-4 h-4 shrink-0" />
@@ -894,7 +896,6 @@ export default function MyUploadsPage() {
 
             {!historyLoading && historyData && (
               <div className="space-y-6">
-                {/* Quick link to full item page with escrow panel */}
                 <Link
                   href={`/item/${historyTarget._id}`}
                   className="flex items-center gap-2 w-full justify-center px-4 py-3 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold shadow-lg shadow-cyan-900/20 transition group"
