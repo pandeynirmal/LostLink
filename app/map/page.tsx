@@ -193,8 +193,10 @@ export default function MapPage() {
                                         {error}
                                     </div>
                                 ) : filteredItems.length === 0 ? (
-                                    <div className="flex items-center justify-center h-[600px] text-muted-foreground">
-                                        No items to display
+                                    <div className="flex items-center justify-center h-[600px] text-muted-foreground text-center px-4">
+                                        {items.length === 0
+                                            ? 'No items to display yet.'
+                                            : 'You have uploads, but none of them have a saved map location. Edit an item and add a location to see it here.'}
                                     </div>
                                 ) : (
                                     <div className="h-[600px]">

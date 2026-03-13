@@ -1,11 +1,12 @@
-'use client'
+"use client";
 
-import React from "react"
+import React from "react";
 
-import { useState, useRef } from 'react'
-import { Upload } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { ImagePreview } from './image-preview'
+import { useState, useRef } from "react";
+import { Upload } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ImagePreview } from "./image-preview";
+import { LocationPicker } from "@/components/location-picker";
 
 interface UploadFormProps {
   onSubmit: (
@@ -22,50 +23,53 @@ interface UploadFormProps {
 }
 
 export function UploadForm({ onSubmit, isLoading, initialItemType = "lost" }: UploadFormProps) {
-  const [preview, setPreview] = useState<string | null>(null)
-  const [file, setFile] = useState<File | null>(null)
-  const [description, setDescription] = useState<string>('')
-  const [itemType, setItemType] = useState<string>(initialItemType)
-  const [rewardAmount, setRewardAmount] = useState<string | number>('')
-  const [rewardPaymentMethod, setRewardPaymentMethod] = useState<"offchain" | "onchain">("offchain")
-  const [sharePhone, setSharePhone] = useState(false)
-  const [contactPhone, setContactPhone] = useState('')
-  const [location, setLocation] = useState<{ lat: number, lng: number } | null>(null)
-  const [isDragActive, setIsDragActive] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [preview, setPreview] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [description, setDescription] = useState<string>("");
+  const [itemType, setItemType] = useState<string>(initialItemType);
+  const [rewardAmount, setRewardAmount] = useState<string | number>("");
+  const [rewardPaymentMethod, setRewardPaymentMethod] = useState<"offchain" | "onchain">("offchain");
+  const [sharePhone, setSharePhone] = useState(false);
+  const [contactPhone, setContactPhone] = useState("");
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [isDragActive, setIsDragActive] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition((position) => {
-        setLocation({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude
-        })
-      }, (error) => {
-        console.log("Error getting location:", error)
-      })
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+        },
+        (error) => {
+          console.log("Error getting location:", error);
+        }
+      );
     }
-  }, [])
+  }, []);
 
   React.useEffect(() => {
-    setItemType(initialItemType)
-  }, [initialItemType])
+    setItemType(initialItemType);
+  }, [initialItemType]);
 
   React.useEffect(() => {
     if (itemType !== "lost") {
-      setSharePhone(false)
-      setContactPhone('')
+      setSharePhone(false);
+      setContactPhone("");
     }
-  }, [itemType])
+  }, [itemType]);
 
   const handleFile = (selectedFile: File) => {
     if (selectedFile.type.startsWith('image/')) {
-      setFile(selectedFile)
-      const reader = new FileReader()
+      setFile(selectedFile);
+      const reader = new FileReader();
       reader.onloadend = () => {
-        setPreview(reader.result as string)
-      }
-      reader.readAsDataURL(selectedFile)
+        setPreview(reader.result as string);
+      };
+      reader.readAsDataURL(selectedFile);
     }
   }
 
@@ -97,9 +101,9 @@ export function UploadForm({ onSubmit, isLoading, initialItemType = "lost" }: Up
   }
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
+    e.preventDefault();
     if (file && description.trim()) {
-      const normalizedPhone = sharePhone ? contactPhone.trim() : ''
+      const normalizedPhone = sharePhone ? contactPhone.trim() : "";
       await onSubmit(
         file,
         itemType,
@@ -108,7 +112,7 @@ export function UploadForm({ onSubmit, isLoading, initialItemType = "lost" }: Up
         location || undefined,
         normalizedPhone || undefined,
         rewardPaymentMethod
-      )
+      );
     }
   }
 
@@ -242,6 +246,13 @@ export function UploadForm({ onSubmit, isLoading, initialItemType = "lost" }: Up
               className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
             />
           </div>
+
+          <LocationPicker
+            onLocationSelect={(lat, lng) => setLocation({ lat, lng })}
+            initialLatitude={location?.lat}
+            initialLongitude={location?.lng}
+          />
+
           <Button
             type="submit"
             disabled={isLoading}
