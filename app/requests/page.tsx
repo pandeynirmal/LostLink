@@ -1,7 +1,8 @@
 "use client";
-
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Navbar } from "@/components/navbar";
+
 
 interface ContactRequest {
   _id: string;
@@ -20,6 +21,7 @@ interface ContactRequest {
 }
 
 export default function RequestsPage() {
+  const router = useRouter();
   const [requests, setRequests] = useState<ContactRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
@@ -116,6 +118,9 @@ export default function RequestsPage() {
       );
       setMessage("Claim verified. Auto-transfer permission enabled.");
       window.dispatchEvent(new Event("app:refresh-badges"));
+      if (request.itemId?._id) {
+  router.push(`/item/${request.itemId._id}#escrow-section`);
+}
     } catch {
       setMessage("Something went wrong.");
     } finally {
