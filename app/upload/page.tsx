@@ -219,8 +219,6 @@ function UploadPageContent() {
         if (location) {
           formData.append("latitude", location.lat.toString());
           formData.append("longitude", location.lng.toString());
-        } formData.append("latitude", location.lat.toString());
-          formData.append("longitude", location.lng.toString());
         }
 
         try {
