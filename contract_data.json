@@ -1,5 +1,5 @@
 {
-  "address": "0xbD3165736BF61AA04F0BD34682f711D3C2393B1C",
+  "address": "0x2e01BF59B486AfA7D888af0c4f030669247FCa9B",
   "abi": [
     {
       "inputs": [],
@@ -1308,23 +1308,5 @@
       "stateMutability": "nonpayable",
       "type": "function"
     }
-  ],
-  "deployer": "0x6ae1694Ae86c80414363b6094Bcf1E3457c22731",
-  "admin": "0x6ae1694Ae86c80414363b6094Bcf1E3457c22731",
-  "network": {
-    "name": "sepolia",
-    "chainId": "11155111"
-  },
-  "deployment": {
-    "timestamp": "2026-03-12T10:47:28.585Z",
-    "transactionHash": "0xcd5d831c6529e6873ecd9f135083139fed1eda6f99bcb16fd9f3697b9797d381",
-    "blockNumber": null
-  },
-  "features": [
-    "Three-layer escrow system",
-    "Time-lock auto-release (7 days)",
-    "Multi-sig release (2-of-3 approvals)",
-    "Dispute resolution system",
-    "Admin role management"
   ]
 }
