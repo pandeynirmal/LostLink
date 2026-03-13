@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { useState, useEffect } from 'react'
 import { Navbar } from '@/components/navbar'
@@ -37,7 +37,17 @@ export default function MapPage() {
         try {
             setLoading(true)
 
-            const response = await fetch('/api/uploads')
+            const response = await fetch('/api/uploads', {
+                credentials: 'include',
+                cache: 'no-store',
+            })
+
+            if (!response.ok) {
+                const errorBody = await response.json().catch(() => null)
+                setError(errorBody?.error || 'Failed to load items')
+                return
+            }
+
             const data = await response.json()
 
             if (data.success) {

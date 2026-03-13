@@ -184,7 +184,7 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
     notes: "",
   });
   const [disputeReason, setDisputeReason] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"offchain" | "onchain">("offchain");
+  const [paymentMethod, setPaymentMethod] = useState<"offchain" | "onchain">("onchain");
 
   const fetchEscrow = useCallback(async () => {
     try {
@@ -222,60 +222,76 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
       let releaseTxHash: string | undefined;
       if (action === "approve_release" && escrow?.paymentMethod === "onchain" && meta?.isOwner) {
         try {
-          // Check if MetaMask is available. If not, show an error but still allow
-          // the normal server-side approval to proceed.
+          // Check if MetaMask is available. If not, require it for on-chain escrows.
           if (!(window as any).ethereum) {
-            setError("MetaMask is required for on-chain release, falling back to off-chain approval only.");
-          } else {
-            // Fetch contract data
-            let contractData;
-            try {
-              const contractRes = await fetch("/contract_data.json");
-              if (!contractRes.ok) throw new Error("Contract data not found. Please run 'npm run deploy' in the blockchain folder.");
-              contractData = await contractRes.json();
-            } catch (err) {
-              setError("Blockchain configuration missing. Run deployment script first. Proceeding with off-chain approval only.");
-              contractData = null;
-            }
+            setError("MetaMask is required for on-chain release. Please install or enable MetaMask and try again.");
+            setActionLoading(null);
+            return;
+          }
 
-            if (contractData) {
-              const provider = new ethers.BrowserProvider((window as any).ethereum);
-              const signer = await provider.getSigner();
-              const signerAddress = await signer.getAddress();
-              
-              const contract = new ethers.Contract(contractData.address, contractData.abi, signer);
+          // Fetch contract data
+          let contractData;
+          try {
+            const contractRes = await fetch("/contract_data.json");
+            if (!contractRes.ok) throw new Error("Contract data not found. Please run 'npm run deploy' in the blockchain folder.");
+            contractData = await contractRes.json();
+          } catch (err) {
+            setError("Blockchain configuration missing. Run deployment script first, then retry the release.");
+            setActionLoading(null);
+            return;
+          }
 
-              // IMPORTANT: Check if the current MetaMask address matches the item's on-chain reporter
-              try {
-                const onChainItem = await contract.items(itemId);
-                const reporterAddress = onChainItem.reporterAddress;
-                
-                if (signerAddress.toLowerCase() !== reporterAddress.toLowerCase()) {
-                  setError(`Wallet mismatch for on-chain release. Proceeding with off-chain approval only. Connected: ${signerAddress.slice(0, 6)}...${signerAddress.slice(-4)}, reporter: ${reporterAddress.slice(0, 6)}...${reporterAddress.slice(-4)}.`);
-                } else {
-                  // We need the finder's address for on-chain verifyAndPay
-                  const finderAddress = escrow.finderId?.walletAddress;
-                  if (!finderAddress) {
-                    setError("Finder's wallet address is missing. They must connect MetaMask first. Proceeding with off-chain approval only.");
-                  } else {
-                    console.log(`[On-chain] Releasing reward for item ${itemId} to ${finderAddress}`);
-                    const tx = await contract.verifyAndPay(itemId, finderAddress, "");
-                    
-                    setError("Transaction sent. Waiting for confirmation...");
-                    await tx.wait();
-                    releaseTxHash = tx.hash;
-                  }
-                }
-              } catch (err) {
-                console.error("Failed to verify on-chain owner:", err);
-                setError("Could not verify on-chain owner. Proceeding with off-chain approval only.");
-              }
+          const provider = new ethers.BrowserProvider((window as any).ethereum);
+          const signer = await provider.getSigner();
+          const signerAddress = await signer.getAddress();
+          
+          const contract = new ethers.Contract(contractData.address, contractData.abi, signer);
+
+          // IMPORTANT: Check if the current MetaMask address matches the item's on-chain reporter
+          try {
+            const onChainItem = await contract.items(itemId);
+            const reporterAddress = onChainItem.reporterAddress;
+            
+            if (signerAddress.toLowerCase() !== reporterAddress.toLowerCase()) {
+              setError(
+                `Wallet mismatch for on-chain release. Connected: ${signerAddress.slice(0, 6)}...${signerAddress.slice(-4)}, expected reporter: ${reporterAddress.slice(0, 6)}...${reporterAddress.slice(-4)}. Switch to the correct account in MetaMask and try again.`
+              );
+              setActionLoading(null);
+              return;
             }
+          } catch (err) {
+            console.error("Failed to verify on-chain owner:", err);
+            setError("Could not verify on-chain owner from the contract. Please check deployment and try again.");
+            setActionLoading(null);
+            return;
+          }
+
+          // We need the finder's address for on-chain verifyAndPay
+          const finderAddress = escrow.finderId?.walletAddress;
+          if (!finderAddress) {
+            setError("Finder's wallet address is missing. They must connect MetaMask first before you can release on-chain.");
+            setActionLoading(null);
+            return;
           }
         } catch (onchainErr) {
           console.error("On-chain release failed:", onchainErr);
-          setError(`Blockchain transaction failed. Proceeding with off-chain approval only. ${(onchainErr as any).reason || (onchainErr as any).message}`);
+          setError(`Blockchain transaction failed: ${(onchainErr as any).reason || (onchainErr as any).message}`);
+          setActionLoading(null);
+          return;
         }
+
+        // If we reached here, we have valid config and addresses – execute on-chain release
+        const contractRes = await fetch("/contract_data.json");
+        const contractData = await contractRes.json();
+        const provider = new ethers.BrowserProvider((window as any).ethereum);
+        const signer = await provider.getSigner();
+        const contract = new ethers.Contract(contractData.address, contractData.abi, signer);
+        const finderAddress = escrow.finderId!.walletAddress!;
+
+        const tx = await contract.verifyAndPay(itemId, finderAddress, "");
+        setError("Transaction sent. Waiting for confirmation...");
+        await tx.wait();
+        releaseTxHash = tx.hash;
       }
 
       const response = await fetch("/api/escrow/action", {
