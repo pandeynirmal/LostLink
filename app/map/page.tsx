@@ -36,46 +36,73 @@ export default function MapPage() {
     const fetchItems = async () => {
         try {
             setLoading(true)
+            setError(null)
 
-            const response = await fetch('/api/uploads', {
+            // First try the public uploads feed
+            let response = await fetch('/api/uploads', {
                 credentials: 'include',
                 cache: 'no-store',
             })
 
-            if (!response.ok) {
-                const errorBody = await response.json().catch(() => null)
-                setError(errorBody?.error || 'Failed to load items')
-                return
-            }
+            let data: any = null
 
-            const data = await response.json()
-
-            if (data.success) {
-                //  Only include items with valid coordinates
-                const mappedItems = data.uploads
-                    .filter((item: any) =>
-                        typeof item.latitude === 'number' &&
-                        typeof item.longitude === 'number'
-                    )
-                    .map((item: any) => ({
-                        id: item.id,
-                        type: item.type,
-                        description: item.description,
-                        latitude: item.latitude,
-                        longitude: item.longitude,
-                        rewardAmount: item.rewardAmount,
-                        timestamp: item.createdAt
-                    }))
-
-                setItems(mappedItems)
-                setFilteredItems(mappedItems)
+            if (response.ok) {
+                data = await response.json().catch(() => null)
+                if (!data || !data.success) {
+                    throw new Error(data?.error || 'Failed to load public uploads')
+                }
             } else {
-                setError('Failed to load items')
+                // If the public endpoint fails (e.g. not configured in deployment),
+                // fall back to the authenticated "my uploads" endpoint so that the
+                // map still works for the signed-in user.
+                response = await fetch('/api/uploads/my', {
+                    credentials: 'include',
+                    cache: 'no-store',
+                })
+
+                if (!response.ok) {
+                    const errorBody = await response.json().catch(() => null)
+                    throw new Error(errorBody?.error || 'Failed to load items')
+                }
+
+                data = await response.json().catch(() => null)
+                if (!data || !data.success) {
+                    throw new Error(data?.error || 'Failed to load items')
+                }
+
+                // Normalize shape to reuse mapping logic
+                if (Array.isArray(data.items) && !data.uploads) {
+                    data.uploads = data.items
+                }
             }
+
+            const sourceArray = Array.isArray(data.uploads) ? data.uploads : []
+
+            const mappedItems = sourceArray
+                .filter((item: any) =>
+                    typeof item.latitude === 'number' &&
+                    typeof item.longitude === 'number'
+                )
+                .map((item: any) => ({
+                    id: item.id || item._id,
+                    type: item.type,
+                    description: item.description,
+                    latitude: item.latitude,
+                    longitude: item.longitude,
+                    rewardAmount: item.rewardAmount,
+                    timestamp: item.createdAt
+                }))
+
+            setItems(mappedItems)
+            setFilteredItems(mappedItems)
 
         } catch (err) {
-            setError('Error connecting to server')
             console.error(err)
+            setError(
+                err instanceof Error
+                    ? err.message || 'Failed to load items'
+                    : 'Failed to load items'
+            )
         } finally {
             setLoading(false)
         }
