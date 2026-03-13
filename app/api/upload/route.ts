@@ -237,7 +237,7 @@ export async function POST(request: NextRequest) {
           }
 
           // Lowered threshold to 0.3 for lightweight AI
-          if (score > 0.3 && score > highestScore) {
+          if (score > 0.15 && score > highestScore) {
             highestScore = score;
             bestMatch = candidateItem;
           }
@@ -253,7 +253,7 @@ export async function POST(request: NextRequest) {
     let blockchainData: any = null;
     const matchScorePercent = Math.round(highestScore * 100);
 
-    if (bestMatch && highestScore >= 0.2) {
+    if (bestMatch && highestScore >= 0.15) {
       status = highestScore >= 0.4 ? "High Match Found" : "Possible Match";
 
       if (highestScore >= 0.4) {
