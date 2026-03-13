@@ -141,12 +141,7 @@ export async function POST(request: NextRequest) {
       Number.isFinite(Number(amountEth)) && Number(amountEth) > 0
         ? Number(amountEth)
         : baseAmount;
-    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
-      return NextResponse.json(
-        { error: "Escrow amount must be greater than 0" },
-        { status: 400 }
-      );
-    }
+  
 
     const existing = await EscrowCase.findOne({ itemId: item._id }).sort({
       createdAt: -1,
