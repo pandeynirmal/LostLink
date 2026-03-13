@@ -218,64 +218,63 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
   const handleAction = async (action: string, extraData: Record<string, unknown> = {}) => {
     setActionLoading(action);
     try {
-      // ON-CHAIN RELEASE LOGIC (CLIENT-SIDE)
+      // ON-CHAIN RELEASE LOGIC (CLIENT-SIDE, OWNER ONLY)
+      let releaseTxHash: string | undefined;
       if (action === "approve_release" && escrow?.paymentMethod === "onchain" && meta?.isOwner) {
         try {
-          // Check if MetaMask is available
+          // Check if MetaMask is available. If not, show an error but still allow
+          // the normal server-side approval to proceed.
           if (!(window as any).ethereum) {
-            setError("MetaMask is required for on-chain payments.");
-            return;
-          }
-
-          // Fetch contract data
-          let contractData;
-          try {
-            const contractRes = await fetch("/contract_data.json");
-            if (!contractRes.ok) throw new Error("Contract data not found. Please run 'npm run deploy' in the blockchain folder.");
-            contractData = await contractRes.json();
-          } catch (err) {
-            setError("Blockchain configuration missing. Run deployment script first.");
-            return;
-          }
-
-          const provider = new ethers.BrowserProvider((window as any).ethereum);
-          const signer = await provider.getSigner();
-          const signerAddress = await signer.getAddress();
-          
-          const contract = new ethers.Contract(contractData.address, contractData.abi, signer);
-
-          // IMPORTANT: Check if the current MetaMask address matches the item's on-chain reporter
-          try {
-            const onChainItem = await contract.items(itemId);
-            const reporterAddress = onChainItem.reporterAddress;
-            
-            if (signerAddress.toLowerCase() !== reporterAddress.toLowerCase()) {
-              setError(`Wallet Mismatch: You are connected as ${signerAddress.slice(0, 6)}...${signerAddress.slice(-4)}, but the item was registered by ${reporterAddress.slice(0, 6)}...${reporterAddress.slice(-4)}. Please switch to the correct account in MetaMask.`);
-              return;
+            setError("MetaMask is required for on-chain release, falling back to off-chain approval only.");
+          } else {
+            // Fetch contract data
+            let contractData;
+            try {
+              const contractRes = await fetch("/contract_data.json");
+              if (!contractRes.ok) throw new Error("Contract data not found. Please run 'npm run deploy' in the blockchain folder.");
+              contractData = await contractRes.json();
+            } catch (err) {
+              setError("Blockchain configuration missing. Run deployment script first. Proceeding with off-chain approval only.");
+              contractData = null;
             }
-          } catch (err) {
-            console.error("Failed to verify on-chain owner:", err);
-          }
 
-          // We need the finder's address for on-chain verifyAndPay
-          const finderAddress = escrow.finderId?.walletAddress;
-          if (!finderAddress) {
-            setError("Finder's wallet address is missing. They must connect MetaMask first.");
-            return;
-          }
+            if (contractData) {
+              const provider = new ethers.BrowserProvider((window as any).ethereum);
+              const signer = await provider.getSigner();
+              const signerAddress = await signer.getAddress();
+              
+              const contract = new ethers.Contract(contractData.address, contractData.abi, signer);
 
-          console.log(`[On-chain] Releasing reward for item ${itemId} to ${finderAddress}`);
-          const tx = await contract.verifyAndPay(itemId, finderAddress, "");
-          
-          setError("Transaction sent. Waiting for confirmation...");
-          await tx.wait();
-          
-          // Once confirmed on-chain, notify backend to update state
-          extraData.releaseTxHash = tx.hash;
+              // IMPORTANT: Check if the current MetaMask address matches the item's on-chain reporter
+              try {
+                const onChainItem = await contract.items(itemId);
+                const reporterAddress = onChainItem.reporterAddress;
+                
+                if (signerAddress.toLowerCase() !== reporterAddress.toLowerCase()) {
+                  setError(`Wallet mismatch for on-chain release. Proceeding with off-chain approval only. Connected: ${signerAddress.slice(0, 6)}...${signerAddress.slice(-4)}, reporter: ${reporterAddress.slice(0, 6)}...${reporterAddress.slice(-4)}.`);
+                } else {
+                  // We need the finder's address for on-chain verifyAndPay
+                  const finderAddress = escrow.finderId?.walletAddress;
+                  if (!finderAddress) {
+                    setError("Finder's wallet address is missing. They must connect MetaMask first. Proceeding with off-chain approval only.");
+                  } else {
+                    console.log(`[On-chain] Releasing reward for item ${itemId} to ${finderAddress}`);
+                    const tx = await contract.verifyAndPay(itemId, finderAddress, "");
+                    
+                    setError("Transaction sent. Waiting for confirmation...");
+                    await tx.wait();
+                    releaseTxHash = tx.hash;
+                  }
+                }
+              } catch (err) {
+                console.error("Failed to verify on-chain owner:", err);
+                setError("Could not verify on-chain owner. Proceeding with off-chain approval only.");
+              }
+            }
+          }
         } catch (onchainErr) {
           console.error("On-chain release failed:", onchainErr);
-          setError(`Blockchain transaction failed: ${(onchainErr as any).reason || (onchainErr as any).message}`);
-          return;
+          setError(`Blockchain transaction failed. Proceeding with off-chain approval only. ${(onchainErr as any).reason || (onchainErr as any).message}`);
         }
       }
 
@@ -283,7 +282,7 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ itemId, action, ...extraData }),
+        body: JSON.stringify({ itemId, action, releaseTxHash, ...extraData }),
       });
 
       const data = await response.json();
