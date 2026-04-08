@@ -252,7 +252,7 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
     );
 
     // ── Step 1: Fetch item details from your API to get reward amount ──────
-    const itemRes = await fetch(`/api/items/${itemId}`, {
+    const itemRes = await fetch(`/api/item/${itemId}`, {
       credentials: "include",
       cache: "no-store",
     });
