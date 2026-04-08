@@ -299,7 +299,7 @@ export async function POST(request: NextRequest) {
             );
           }
 
-          if (score > 0.2) {
+          if (score > 0.5) {
             allMatches.push({
               id: candidateItem._id.toString(),
               score: Math.round(score * 100),
@@ -325,7 +325,7 @@ export async function POST(request: NextRequest) {
     let blockchainData: any = null;
     const matchScorePercent = Math.round(highestScore * 100);
 
-    if (bestMatch && highestScore >= 0.15) {
+    if (bestMatch && highestScore >= 0.65) {
       status = highestScore >= 0.4 ? "High Match Found" : "Possible Match";
 
       if (highestScore >= 0.4) {

@@ -136,6 +136,8 @@ export default function MyUploadsPage() {
   useEffect(() => {
     fetchUploads();
     setHasMetaMask(typeof window !== "undefined" && Boolean((window as any).ethereum));
+    const interval = setInterval(fetchUploads, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchUploads = async () => {
