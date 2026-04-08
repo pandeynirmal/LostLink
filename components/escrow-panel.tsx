@@ -477,9 +477,8 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
       setTimeout(() => {
         void fetchEscrow();
       }, 1000);
-      setError("");
-    } catch {
-      setError("Action failed");
+    } catch (err: any) {
+      setError(err.message || "Action failed");
     } finally {
       setActionLoading(null);
     }
