@@ -146,7 +146,9 @@ export async function POST(request: NextRequest) {
             existing.embedding,
             embedding
           );
-          console.log(`[DUPLICATE CHECK] score: ${matchResult.match_score} between existing:${existing._id} and new upload`);
+          console.log(
+            `[DUPLICATE CHECK] score: ${matchResult.match_score} between existing:${existing._id} and new upload`
+          );
           if (!bypassDuplicate && matchResult.match_score >= 0.98) {
             const sameType = existing.type === itemType;
             return NextResponse.json(
@@ -234,10 +236,11 @@ export async function POST(request: NextRequest) {
         const oppositeType = itemType === "lost" ? "found" : "lost";
         const potentialMatches = await Item.find({
           type: oppositeType,
-          status: "pending",
+          status: { $in: ["pending", "matched"] },
           removedByAdmin: { $ne: true },
-        });
-
+        })
+          .limit(20)
+          .sort({ createdAt: -1 });
         let newItemTextEmbedding: number[] | null = null;
         try {
           newItemTextEmbedding = await getTextEmbedding(description);
@@ -309,7 +312,7 @@ export async function POST(request: NextRequest) {
           }
 
           // Lowered threshold to 0.3 for lightweight AI
-          if (score > 0.60 && score > highestScore) {
+          if (score > 0.6 && score > highestScore) {
             highestScore = score;
             bestMatch = candidateItem;
           }
@@ -326,7 +329,7 @@ export async function POST(request: NextRequest) {
     const matchScorePercent = Math.round(highestScore * 100);
 
     if (bestMatch && highestScore >= 0.65) {
-      status = highestScore >= 0.80 ? "High Match Found" : "Possible Match";
+      status = highestScore >= 0.8 ? "High Match Found" : "Possible Match";
 
       if (highestScore >= 0.65) {
         try {
