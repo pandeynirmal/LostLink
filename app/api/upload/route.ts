@@ -146,7 +146,8 @@ export async function POST(request: NextRequest) {
             existing.embedding,
             embedding
           );
-          if (!bypassDuplicate && matchResult.match_score >= 0.95) {
+          console.log(`[DUPLICATE CHECK] score: ${matchResult.match_score} between existing:${existing._id} and new upload`);
+          if (!bypassDuplicate && matchResult.match_score >= 0.98) {
             const sameType = existing.type === itemType;
             return NextResponse.json(
               {
