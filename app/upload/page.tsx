@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Navbar } from "@/components/navbar";
 import { UploadForm } from "@/components/upload-form";
 import Loading from "./loading";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Clock, Search, Eye, AlertTriangle, ExternalLink } from "lucide-react";
@@ -129,11 +129,23 @@ function RecentUploads() {
   );
 }
 
+type HandleSubmitParams = [
+  file: File,
+  type: string,
+  description: string,
+  rewardAmount?: number,
+  location?: { lat: number; lng: number },
+  contactPhone?: string,
+  rewardPaymentMethod?: "offchain" | "onchain"
+];
+
 function UploadPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState<DuplicateWarning | null>(null);
+  const bypassDuplicateRef = useRef(false);
+  const pendingSubmitRef = useRef<HandleSubmitParams | null>(null);
   const isAuthenticated = useAuthGuard();
 
   const itemType = searchParams.get("type") || "lost";
@@ -152,6 +164,9 @@ function UploadPageContent() {
     setIsLoading(true);
     setDuplicateWarning(null);
 
+    const bypassDuplicate = bypassDuplicateRef.current;
+    bypassDuplicateRef.current = false;
+
     try {
       const reader = new FileReader();
       reader.onloadend = async () => {
@@ -166,6 +181,7 @@ function UploadPageContent() {
           formData.append("latitude", location.lat.toString());
           formData.append("longitude", location.lng.toString());
         }
+        if (bypassDuplicate) formData.append("bypassDuplicate", "true");
 
         try {
           const response = await fetch("/api/upload", {
@@ -178,7 +194,7 @@ function UploadPageContent() {
 
           if (!response.ok) {
             if (response.status === 409) {
-              // Show inline duplicate warning instead of browser confirm()
+              pendingSubmitRef.current = [file, type, description, rewardAmount, location, contactPhone, rewardPaymentMethod];
               setDuplicateWarning({
                 error: result.error,
                 existingItemId: result.existingItemId,
@@ -216,9 +232,55 @@ function UploadPageContent() {
     }
   };
 
+  const handleUploadAnyway = () => {
+    if (pendingSubmitRef.current) {
+      bypassDuplicateRef.current = true;
+      setDuplicateWarning(null);
+      handleSubmit(...pendingSubmitRef.current);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
+
+      {/* Duplicate Warning Popup Modal */}
+      {duplicateWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-amber-950 border border-amber-500/60 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+              <h3 className="text-amber-300 font-semibold text-lg">Similar Item Already Registered</h3>
+            </div>
+            <p className="text-amber-200 text-sm mb-1">{duplicateWarning.error}</p>
+            <p className="text-amber-400 text-xs mb-4">
+              Match confidence: {duplicateWarning.matchScore}%
+            </p>
+            <div className="bg-amber-900/40 border border-amber-700/40 rounded-lg p-3 mb-5">
+              <p className="text-amber-300 text-xs font-semibold uppercase mb-1">
+                Existing Item ({duplicateWarning.existingItemType})
+              </p>
+              <p className="text-amber-100 text-sm">{duplicateWarning.existingDescription}</p>
+            </div>
+            <div className="flex gap-3">
+              <Button
+                className="flex-1 bg-amber-500 hover:bg-amber-400 text-black font-medium gap-1"
+                onClick={() => router.push(`/item/${duplicateWarning.existingItemId}`)}
+              >
+                <ExternalLink className="w-3 h-3" />
+                View Existing Item
+              </Button>
+              <Button
+                className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium"
+                onClick={handleUploadAnyway}
+              >
+                Upload Anyway
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="mx-auto flex max-w-7xl flex-col items-center justify-center px-4 py-8 sm:py-16">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
@@ -254,52 +316,6 @@ function UploadPageContent() {
             </button>
           </div>
         </div>
-
-        {/* Duplicate Warning Banner */}
-        {duplicateWarning && (
-          <div className="w-full max-w-2xl mb-6 rounded-xl border border-amber-400 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-600 p-5">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              <div className="flex-1 space-y-3">
-                <div>
-                  <p className="font-semibold text-amber-800 dark:text-amber-200">
-                    Similar Item Already Registered
-                  </p>
-                  <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-                    {duplicateWarning.error}
-                  </p>
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                    Match confidence: {duplicateWarning.matchScore}%
-                  </p>
-                </div>
-                <div className="p-3 bg-white dark:bg-black/30 rounded-lg border border-amber-200 dark:border-amber-700 text-sm">
-                  <p className="text-xs text-amber-600 dark:text-amber-400 uppercase font-semibold mb-1">
-                    Existing item ({duplicateWarning.existingItemType})
-                  </p>
-                  <p className="text-amber-900 dark:text-amber-100">{duplicateWarning.existingDescription}</p>
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  <Button
-                    onClick={() => router.push(`/item/${duplicateWarning.existingItemId}`)}
-                    size="sm"
-                    className="bg-amber-600 hover:bg-amber-700 text-white gap-1"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    View Existing Item
-                  </Button>
-                  <Button
-                    onClick={() => setDuplicateWarning(null)}
-                    size="sm"
-                    variant="outline"
-                    className="border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300"
-                  >
-                    Upload Anyway
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         <UploadForm
           onSubmit={handleSubmit}

@@ -11,7 +11,10 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-async function uploadToCloudinary(buffer: Buffer, filename: string): Promise<string> {
+async function uploadToCloudinary(
+  buffer: Buffer,
+  filename: string
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
@@ -34,7 +37,10 @@ export async function POST(request: NextRequest) {
     const token = cookieStore.get("token")?.value;
 
     if (!token) {
-      return NextResponse.json({ error: "Unauthorized. Please login first." }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized. Please login first." },
+        { status: 401 }
+      );
     }
 
     const decoded = verifyToken(token);
@@ -51,12 +57,18 @@ export async function POST(request: NextRequest) {
     const rawRewardAmount = formData.get("rewardAmount");
     const parsedRewardAmount =
       typeof rawRewardAmount === "string" && rawRewardAmount.trim() !== ""
-        ? Number(rawRewardAmount) : 0;
-    const rewardAmount = Number.isFinite(parsedRewardAmount) ? parsedRewardAmount : 0;
+        ? Number(rawRewardAmount)
+        : 0;
+    const rewardAmount = Number.isFinite(parsedRewardAmount)
+      ? parsedRewardAmount
+      : 0;
     const rawContactPhone = formData.get("contactPhone");
-    const contactPhone = typeof rawContactPhone === "string" ? rawContactPhone.trim() : "";
+    const contactPhone =
+      typeof rawContactPhone === "string" ? rawContactPhone.trim() : "";
     const rewardPaymentMethod =
-      (formData.get("rewardPaymentMethod") as "offchain" | "onchain") || "offchain";
+      (formData.get("rewardPaymentMethod") as "offchain" | "onchain") ||
+      "offchain";
+    const bypassDuplicate = formData.get("bypassDuplicate") === "true";
     const latitude = parseFloat(formData.get("latitude") as string);
     const longitude = parseFloat(formData.get("longitude") as string);
 
@@ -68,17 +80,26 @@ export async function POST(request: NextRequest) {
     }
 
     if (!["lost", "found"].includes(itemType)) {
-      return NextResponse.json({ error: 'Invalid type. Must be "lost" or "found"' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Invalid type. Must be "lost" or "found"' },
+        { status: 400 }
+      );
     }
 
     if (rewardAmount < 0) {
-      return NextResponse.json({ error: "Reward amount must be greater than or equal to 0" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Reward amount must be greater than or equal to 0" },
+        { status: 400 }
+      );
     }
 
     if (itemType === "lost" && contactPhone) {
       const phonePattern = /^[+\d][\d\s-]{7,19}$/;
       if (!phonePattern.test(contactPhone)) {
-        return NextResponse.json({ error: "Enter a valid mobile number." }, { status: 400 });
+        return NextResponse.json(
+          { error: "Enter a valid mobile number." },
+          { status: 400 }
+        );
       }
     }
 
@@ -104,7 +125,10 @@ export async function POST(request: NextRequest) {
       const { getEmbedding } = await import("@/lib/ai-service");
       embedding = await getEmbedding(buffer, image.name);
     } catch (error) {
-      console.warn("AI service unavailable, skipping embedding:", (error as Error).message);
+      console.warn(
+        "AI service unavailable, skipping embedding:",
+        (error as Error).message
+      );
     }
 
     if (embedding.length > 0) {
@@ -118,8 +142,11 @@ export async function POST(request: NextRequest) {
         if (!existing.embedding?.length) continue;
         try {
           const { getMatchScore } = await import("@/lib/ai-service");
-          const matchResult = await getMatchScore(existing.embedding, embedding);
-          if (matchResult.match_score >= 0.95) {
+          const matchResult = await getMatchScore(
+            existing.embedding,
+            embedding
+          );
+          if (!bypassDuplicate && matchResult.match_score >= 0.95) {
             const sameType = existing.type === itemType;
             return NextResponse.json(
               {
@@ -127,6 +154,9 @@ export async function POST(request: NextRequest) {
                   ? `You have already uploaded this item as ${itemType}.`
                   : `You have already uploaded this item as ${existing.type}.`,
                 existingItemId: existing._id,
+                existingItemType: existing.type,
+                existingDescription: existing.description || "Similar item",
+                matchScore: Math.round(matchResult.match_score * 100),
                 details: "Duplicate detection prevented this upload.",
               },
               { status: 409 }
@@ -146,7 +176,8 @@ export async function POST(request: NextRequest) {
       userId,
       status: "pending",
       rewardAmount: itemType === "lost" ? rewardAmount : 0,
-      rewardPaymentMethod: itemType === "lost" ? rewardPaymentMethod : "offchain",
+      rewardPaymentMethod:
+        itemType === "lost" ? rewardPaymentMethod : "offchain",
       contactPhone: itemType === "lost" ? contactPhone : "",
       latitude: !isNaN(latitude) ? latitude : undefined,
       longitude: !isNaN(longitude) ? longitude : undefined,
@@ -155,13 +186,19 @@ export async function POST(request: NextRequest) {
     if (itemType === "lost") {
       try {
         const { registerItem } = await import("@/lib/blockchain");
-        const mockCid = `Qm${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
+        const mockCid = `Qm${Math.random()
+          .toString(36)
+          .substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
         const metadataURI = `ipfs://${mockCid}`;
         const blockchainData = await registerItem(
-          newItem._id.toString(), itemType,
+          newItem._id.toString(),
+          itemType,
           `QR-${newItem._id.toString().substring(0, 8)}`,
-          latitude || 0, longitude || 0,
-          description.substring(0, 32), rewardAmount, metadataURI
+          latitude || 0,
+          longitude || 0,
+          description.substring(0, 32),
+          rewardAmount,
+          metadataURI
         );
         if (blockchainData) {
           await Item.findByIdAndUpdate(newItem._id, {
@@ -169,18 +206,30 @@ export async function POST(request: NextRequest) {
           });
         }
       } catch (error) {
-        console.warn("Blockchain registration skipped:", (error as Error).message);
+        console.warn(
+          "Blockchain registration skipped:",
+          (error as Error).message
+        );
       }
     }
 
     let bestMatch = null;
     let highestScore = 0;
-    let allMatches: Array<{ id: string; score: number; description: string; imageUrl: string }> = [];
+    let allMatches: Array<{
+      id: string;
+      score: number;
+      description: string;
+      imageUrl: string;
+    }> = [];
 
     if (embedding.length > 0) {
-      console.log('[Upload] Starting AI matching with embedding length:', embedding.length);
+      console.log(
+        "[Upload] Starting AI matching with embedding length:",
+        embedding.length
+      );
       try {
-        const { getMatchScore, getTextEmbedding, getCombinedMatchScore } = await import("@/lib/ai-service");
+        const { getMatchScore, getTextEmbedding, getCombinedMatchScore } =
+          await import("@/lib/ai-service");
         const oppositeType = itemType === "lost" ? "found" : "lost";
         const potentialMatches = await Item.find({
           type: oppositeType,
@@ -202,29 +251,51 @@ export async function POST(request: NextRequest) {
 
           if (newItemTextEmbedding && candidateItem.description) {
             try {
-              const candidateTextEmb = await getTextEmbedding(candidateItem.description);
+              const candidateTextEmb = await getTextEmbedding(
+                candidateItem.description
+              );
               const combinedResult = await getCombinedMatchScore(
-                candidateItem.embedding, embedding,
-                candidateTextEmb, newItemTextEmbedding,
+                candidateItem.embedding,
+                embedding,
+                candidateTextEmb,
+                newItemTextEmbedding,
                 { image: 0.6, text: 0.4 }
               );
               score = combinedResult.combined_match_score;
-              console.log(`[Upload] Combined match score for ${candidateItem._id}:`, {
-                combined: score,
-                image: combinedResult.image_match_score,
-                text: combinedResult.text_match_score,
-                description: candidateItem.description.substring(0, 50)
-              });
+              console.log(
+                `[Upload] Combined match score for ${candidateItem._id}:`,
+                {
+                  combined: score,
+                  image: combinedResult.image_match_score,
+                  text: combinedResult.text_match_score,
+                  description: candidateItem.description.substring(0, 50),
+                }
+              );
             } catch (err) {
-              console.warn('Combined match failed, falling back to image-only:', (err as Error).message);
-              const matchResult = await getMatchScore(candidateItem.embedding, embedding);
+              console.warn(
+                "Combined match failed, falling back to image-only:",
+                (err as Error).message
+              );
+              const matchResult = await getMatchScore(
+                candidateItem.embedding,
+                embedding
+              );
               score = matchResult.match_score;
-              console.log(`[Upload] Image-only match score for ${candidateItem._id}:`, score);
+              console.log(
+                `[Upload] Image-only match score for ${candidateItem._id}:`,
+                score
+              );
             }
           } else {
-            const matchResult = await getMatchScore(candidateItem.embedding, embedding);
+            const matchResult = await getMatchScore(
+              candidateItem.embedding,
+              embedding
+            );
             score = matchResult.match_score;
-            console.log(`[Upload] Basic image match score for ${candidateItem._id}:`, score);
+            console.log(
+              `[Upload] Basic image match score for ${candidateItem._id}:`,
+              score
+            );
           }
 
           if (score > 0.2) {
@@ -260,12 +331,19 @@ export async function POST(request: NextRequest) {
         try {
           const { recordMatch } = await import("@/lib/blockchain");
           blockchainData = await recordMatch(
-            itemType === "found" ? (bestMatch as any)._id.toString() : newItem._id.toString(),
-            itemType === "found" ? newItem._id.toString() : (bestMatch as any)._id.toString(),
+            itemType === "found"
+              ? (bestMatch as any)._id.toString()
+              : newItem._id.toString(),
+            itemType === "found"
+              ? newItem._id.toString()
+              : (bestMatch as any)._id.toString(),
             highestScore
           );
         } catch (error) {
-          console.warn("Blockchain match recording skipped:", (error as Error).message);
+          console.warn(
+            "Blockchain match recording skipped:",
+            (error as Error).message
+          );
         }
       }
 
@@ -273,25 +351,32 @@ export async function POST(request: NextRequest) {
         status: "matched",
         matchedItemId: (bestMatch as any)._id,
         matchScore: highestScore,
-        ...(blockchainData && { blockchain: { ...blockchainData, action: "match" } }),
+        ...(blockchainData && {
+          blockchain: { ...blockchainData, action: "match" },
+        }),
       });
-      console.log(`[Upload] Stored match for newItem ${newItem._id}:`, { 
-        matchedTo: (bestMatch as any)._id, 
-        score: highestScore, 
-        scorePercent: Math.round(highestScore * 100) 
+      console.log(`[Upload] Stored match for newItem ${newItem._id}:`, {
+        matchedTo: (bestMatch as any)._id,
+        score: highestScore,
+        scorePercent: Math.round(highestScore * 100),
       });
 
       await Item.findByIdAndUpdate((bestMatch as any)._id, {
         status: "matched",
         matchedItemId: newItem._id,
         matchScore: highestScore,
-        ...(blockchainData && { blockchain: { ...blockchainData, action: "match" } }),
+        ...(blockchainData && {
+          blockchain: { ...blockchainData, action: "match" },
+        }),
       });
-      console.log(`[Upload] Stored match for bestMatch ${(bestMatch as any)._id}:`, { 
-        matchedTo: newItem._id, 
-        score: highestScore, 
-        scorePercent: Math.round(highestScore * 100) 
-      });
+      console.log(
+        `[Upload] Stored match for bestMatch ${(bestMatch as any)._id}:`,
+        {
+          matchedTo: newItem._id,
+          score: highestScore,
+          scorePercent: Math.round(highestScore * 100),
+        }
+      );
     }
 
     return NextResponse.json({
@@ -325,4 +410,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
