@@ -76,14 +76,27 @@ async function executeEscrowRelease(escrow: any, providedTxHash?: string) {
     throw new Error("Escrow amount must be greater than 0.");
   }
 
-  const pseudoTxHash = providedTxHash || "offchain_" + Date.now().toString(16);
+  let pseudoTxHash = providedTxHash || "offchain_" + Date.now().toString(16);
   const isOffchain = freshEscrow.paymentMethod !== "onchain";
-
   if (
     !item.isClaimed &&
     item.status !== "resolved" &&
     !freshEscrow.finderFundReceived
   ) {
+    if (!isOffchain) {
+      // Server wallet calls verifyAndPay on-chain — real Sepolia tx
+      const finderWallet = finder.walletAddress;
+      if (finderWallet) {
+        const blockchainResult = await verifyAndPay(
+          item._id.toString(),
+          finderWallet,
+          ""
+        );
+        if (blockchainResult?.txHash) {
+          pseudoTxHash = blockchainResult.txHash;
+        }
+      }
+    }
     if (isOffchain) {
       await User.updateOne(
         { _id: finder._id },
