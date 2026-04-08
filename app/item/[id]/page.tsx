@@ -98,6 +98,8 @@ export default function ItemDetailsPage() {
     };
 
     fetchAll();
+    const interval = setInterval(fetchAll, 15000);
+    return () => clearInterval(interval);
   }, [id]);
 
   const handleRequestContact = async () => {

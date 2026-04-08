@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Navbar } from "@/components/navbar";
 
-
 interface ContactRequest {
   _id: string;
   itemId: {
@@ -79,7 +78,10 @@ export default function RequestsPage() {
       return true;
     }
 
-    if (typeof data.error === "string" && data.error.toLowerCase().includes("already processed")) {
+    if (
+      typeof data.error === "string" &&
+      data.error.toLowerCase().includes("already processed")
+    ) {
       return true;
     }
 
@@ -114,13 +116,15 @@ export default function RequestsPage() {
       if (!approved) return;
 
       setRequests((prev) =>
-        prev.map((r) => (r._id === request._id ? { ...r, status: "approved" } : r))
+        prev.map((r) =>
+          r._id === request._id ? { ...r, status: "approved" } : r
+        )
       );
       setMessage("Claim verified. Auto-transfer permission enabled.");
       window.dispatchEvent(new Event("app:refresh-badges"));
       if (request.itemId?._id) {
-  router.push(`/item/${request.itemId._id}#escrow-section`);
-}
+        router.push(`/item/${request.itemId._id}#escrow-section`);
+      }
     } catch {
       setMessage("Something went wrong.");
     } finally {
@@ -136,6 +140,9 @@ export default function RequestsPage() {
       if (!opened) return;
       setMessage("Chat opened. You can now discuss details.");
       window.dispatchEvent(new Event("app:refresh-badges"));
+      if (request.itemId?._id) {
+        router.push(`/item/${request.itemId._id}`);
+      }
     } catch {
       setMessage("Something went wrong.");
     } finally {
@@ -299,67 +306,78 @@ export default function RequestsPage() {
           requests
             .filter((request) => request?.itemId?._id)
             .map((request) => {
-            const proposedAmount = Number(request.proposedAmount || 0);
-            const rewardAmount = Number(request.itemId?.rewardAmount || 0);
-            const payoutAmount = proposedAmount > 0 ? proposedAmount : rewardAmount;
-            const isBusy = processingId === request._id;
+              const proposedAmount = Number(request.proposedAmount || 0);
+              const rewardAmount = Number(request.itemId?.rewardAmount || 0);
+              const payoutAmount =
+                proposedAmount > 0 ? proposedAmount : rewardAmount;
+              const isBusy = processingId === request._id;
 
-            return (
-              <div key={request._id} className="border rounded-lg p-4 space-y-4">
-                <div className="grid md:grid-cols-2 gap-2 text-sm">
-                  <p>
-                    <strong>Item:</strong> {request.itemId?.description || "Item unavailable"}
-                  </p>
-                  <p>
-                    <strong>Requested by:</strong> {request.requesterId.fullName} ({request.requesterId.email})
-                  </p>
-                  <p>
-                    <strong>Proposed Claim:</strong> {proposedAmount} ETH
-                  </p>
-                  <p>
-                    <strong>Item Reward:</strong> {rewardAmount} ETH
-                  </p>
-                  <p>
-                    <strong>Payable Now:</strong> {payoutAmount} ETH
-                  </p>
-                  <p>
-                    <strong>Claim Status:</strong> {request.status}
-                  </p>
-                </div>
+              return (
+                <div
+                  key={request._id}
+                  className="border rounded-lg p-4 space-y-4"
+                >
+                  <div className="grid md:grid-cols-2 gap-2 text-sm">
+                    <p>
+                      <strong>Item:</strong>{" "}
+                      {request.itemId?.description || "Item unavailable"}
+                    </p>
+                    <p>
+                      <strong>Requested by:</strong>{" "}
+                      {request.requesterId.fullName} (
+                      {request.requesterId.email})
+                    </p>
+                    <p>
+                      <strong>Proposed Claim:</strong> {proposedAmount} ETH
+                    </p>
+                    <p>
+                      <strong>Item Reward:</strong> {rewardAmount} ETH
+                    </p>
+                    <p>
+                      <strong>Payable Now:</strong> {payoutAmount} ETH
+                    </p>
+                    <p>
+                      <strong>Claim Status:</strong> {request.status}
+                    </p>
+                  </div>
 
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    onClick={() => handleVerifyClaim(request)}
-                    disabled={isBusy || request.status === "approved"}
-                    className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded disabled:opacity-50"
-                  >
-                    {isBusy ? "Processing..." : request.status === "approved" ? "Claim Verified" : "Verify Claim"}
-                  </button>
-                  <button
-                    onClick={() => handleOpenChatOnly(request)}
-                    disabled={isBusy}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded disabled:opacity-50"
-                  >
-                    {isBusy ? "Processing..." : "Open Chat Only"}
-                  </button>
-                  <button
-                    onClick={() => handleApproveAndPay(request)}
-                    disabled={isBusy}
-                    className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50"
-                  >
-                    {isBusy ? "Processing..." : "Pay & Verify Now"}
-                  </button>
-                  <button
-                    onClick={() => handleDeleteClaim(request)}
-                    disabled={isBusy}
-                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded disabled:opacity-50"
-                  >
-                    {isBusy ? "Processing..." : "Delete Claim"}
-                  </button>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={() => handleVerifyClaim(request)}
+                      disabled={isBusy || request.status === "approved"}
+                      className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded disabled:opacity-50"
+                    >
+                      {isBusy
+                        ? "Processing..."
+                        : request.status === "approved"
+                        ? "Claim Verified"
+                        : "Verify Claim"}
+                    </button>
+                    <button
+                      onClick={() => handleOpenChatOnly(request)}
+                      disabled={isBusy}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded disabled:opacity-50"
+                    >
+                      {isBusy ? "Processing..." : "Open Chat Only"}
+                    </button>
+                    <button
+                      onClick={() => handleApproveAndPay(request)}
+                      disabled={isBusy}
+                      className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50"
+                    >
+                      {isBusy ? "Processing..." : "Pay & Verify Now"}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteClaim(request)}
+                      disabled={isBusy}
+                      className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded disabled:opacity-50"
+                    >
+                      {isBusy ? "Processing..." : "Delete Claim"}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            );
-          })
+              );
+            })
         )}
       </main>
     </div>
