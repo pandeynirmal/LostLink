@@ -8,7 +8,14 @@ import Loading from "./loading";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, Clock, Search, Eye, AlertTriangle, ExternalLink } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock,
+  Search,
+  Eye,
+  AlertTriangle,
+  ExternalLink,
+} from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -20,7 +27,10 @@ function useAuthGuard() {
     const checkAuth = async () => {
       try {
         const res = await fetch("/api/auth/me", { credentials: "include" });
-        if (!res.ok) { router.push("/signin"); return; }
+        if (!res.ok) {
+          router.push("/signin");
+          return;
+        }
         setIsAuthenticated(true);
       } catch {
         router.push("/signin");
@@ -83,14 +93,22 @@ function RecentUploads() {
   return (
     <div className="mt-16 w-full max-w-4xl">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-semibold tracking-tight">Your Recent Activity</h2>
-        <Link href="/my-uploads" className="text-sm text-violet-600 hover:underline font-medium">
+        <h2 className="text-2xl font-semibold tracking-tight">
+          Your Recent Activity
+        </h2>
+        <Link
+          href="/my-uploads"
+          className="text-sm text-violet-600 hover:underline font-medium"
+        >
           View all uploads →
         </Link>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {uploads.map((upload) => (
-          <Card key={upload._id} className="overflow-hidden hover:shadow-md transition-shadow group">
+          <Card
+            key={upload._id}
+            className="overflow-hidden hover:shadow-md transition-shadow group"
+          >
             <Link href={`/item/${upload._id}`}>
               <div className="relative aspect-video bg-muted">
                 <Image
@@ -101,19 +119,35 @@ function RecentUploads() {
                 />
                 <div className="absolute top-2 left-2">
                   <Badge className="bg-black/60 text-white backdrop-blur-md border-white/20">
-                    {upload.type === "lost" ? <Search className="w-3 h-3 mr-1" /> : <Eye className="w-3 h-3 mr-1" />}
+                    {upload.type === "lost" ? (
+                      <Search className="w-3 h-3 mr-1" />
+                    ) : (
+                      <Eye className="w-3 h-3 mr-1" />
+                    )}
                     <span className="capitalize">{upload.type}</span>
                   </Badge>
                 </div>
               </div>
               <CardContent className="p-4">
-                <p className="font-medium text-sm line-clamp-1 mb-2">{upload.description}</p>
+                <p className="font-medium text-sm line-clamp-1 mb-2">
+                  {upload.description}
+                </p>
                 <div className="flex items-center justify-between">
                   <Badge
-                    variant={upload.status === "matched" ? "default" : "secondary"}
-                    className={upload.status === "matched" ? "bg-green-500 hover:bg-green-600" : ""}
+                    variant={
+                      upload.status === "matched" ? "default" : "secondary"
+                    }
+                    className={
+                      upload.status === "matched"
+                        ? "bg-green-500 hover:bg-green-600"
+                        : ""
+                    }
                   >
-                    {upload.status === "matched" ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <Clock className="w-3 h-3 mr-1" />}
+                    {upload.status === "matched" ? (
+                      <CheckCircle2 className="w-3 h-3 mr-1" />
+                    ) : (
+                      <Clock className="w-3 h-3 mr-1" />
+                    )}
                     <span className="capitalize">{upload.status}</span>
                   </Badge>
                   <span className="text-[10px] text-muted-foreground">
@@ -143,7 +177,8 @@ function UploadPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
-  const [duplicateWarning, setDuplicateWarning] = useState<DuplicateWarning | null>(null);
+  const [duplicateWarning, setDuplicateWarning] =
+    useState<DuplicateWarning | null>(null);
   const bypassDuplicateRef = useRef(false);
   const pendingSubmitRef = useRef<HandleSubmitParams | null>(null);
   const isAuthenticated = useAuthGuard();
@@ -174,9 +209,12 @@ function UploadPageContent() {
         formData.append("image", file);
         formData.append("description", description);
         formData.append("type", type);
-        if (rewardAmount) formData.append("rewardAmount", rewardAmount.toString());
-        if (rewardPaymentMethod) formData.append("rewardPaymentMethod", rewardPaymentMethod);
-        if (contactPhone && contactPhone.trim()) formData.append("contactPhone", contactPhone.trim());
+        if (rewardAmount)
+          formData.append("rewardAmount", rewardAmount.toString());
+        if (rewardPaymentMethod)
+          formData.append("rewardPaymentMethod", rewardPaymentMethod);
+        if (contactPhone && contactPhone.trim())
+          formData.append("contactPhone", contactPhone.trim());
         if (location) {
           formData.append("latitude", location.lat.toString());
           formData.append("longitude", location.lng.toString());
@@ -194,12 +232,21 @@ function UploadPageContent() {
 
           if (!response.ok) {
             if (response.status === 409) {
-              pendingSubmitRef.current = [file, type, description, rewardAmount, location, contactPhone, rewardPaymentMethod];
+              pendingSubmitRef.current = [
+                file,
+                type,
+                description,
+                rewardAmount,
+                location,
+                contactPhone,
+                rewardPaymentMethod,
+              ];
               setDuplicateWarning({
                 error: result.error,
                 existingItemId: result.existingItemId,
                 existingItemType: result.existingItemType || "unknown",
-                existingDescription: result.existingDescription || "Similar item",
+                existingDescription:
+                  result.existingDescription || "Similar item",
                 matchScore: result.matchScore || 0,
               });
               setIsLoading(false);
@@ -212,7 +259,7 @@ function UploadPageContent() {
             "analysisResult",
             JSON.stringify({
               ...result,
-              imagePreview: reader.result,
+              imagePreview: result.imageUrl || "",
               timestamp: new Date().toISOString(),
               type: type,
             })
@@ -250,9 +297,13 @@ function UploadPageContent() {
           <div className="bg-amber-950 border border-amber-500/60 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
             <div className="flex items-center gap-2 mb-3">
               <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
-              <h3 className="text-amber-300 font-semibold text-lg">Similar Item Already Registered</h3>
+              <h3 className="text-amber-300 font-semibold text-lg">
+                Similar Item Already Registered
+              </h3>
             </div>
-            <p className="text-amber-200 text-sm mb-1">{duplicateWarning.error}</p>
+            <p className="text-amber-200 text-sm mb-1">
+              {duplicateWarning.error}
+            </p>
             <p className="text-amber-400 text-xs mb-4">
               Match confidence: {duplicateWarning.matchScore}%
             </p>
@@ -260,12 +311,16 @@ function UploadPageContent() {
               <p className="text-amber-300 text-xs font-semibold uppercase mb-1">
                 Existing Item ({duplicateWarning.existingItemType})
               </p>
-              <p className="text-amber-100 text-sm">{duplicateWarning.existingDescription}</p>
+              <p className="text-amber-100 text-sm">
+                {duplicateWarning.existingDescription}
+              </p>
             </div>
             <div className="flex gap-3">
               <Button
                 className="flex-1 bg-amber-500 hover:bg-amber-400 text-black font-medium gap-1"
-                onClick={() => router.push(`/item/${duplicateWarning.existingItemId}`)}
+                onClick={() =>
+                  router.push(`/item/${duplicateWarning.existingItemId}`)
+                }
               >
                 <ExternalLink className="w-3 h-3" />
                 View Existing Item
@@ -294,7 +349,10 @@ function UploadPageContent() {
           <div className="mt-4 flex items-center justify-center gap-3">
             <button
               type="button"
-              onClick={() => { setDuplicateWarning(null); router.push("/upload?type=lost"); }}
+              onClick={() => {
+                setDuplicateWarning(null);
+                router.push("/upload?type=lost");
+              }}
               className={`rounded-md px-4 py-2 text-sm font-medium border ${
                 itemType === "lost"
                   ? "bg-red-600 text-white border-red-600"
@@ -305,7 +363,10 @@ function UploadPageContent() {
             </button>
             <button
               type="button"
-              onClick={() => { setDuplicateWarning(null); router.push("/upload?type=found"); }}
+              onClick={() => {
+                setDuplicateWarning(null);
+                router.push("/upload?type=found");
+              }}
               className={`rounded-md px-4 py-2 text-sm font-medium border ${
                 itemType === "found"
                   ? "bg-green-600 text-white border-green-600"
