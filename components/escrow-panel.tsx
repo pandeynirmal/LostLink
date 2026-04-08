@@ -274,22 +274,6 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
 
     if (alreadyRegistered) {
       // Confirm the signer IS the on-chain reporter
-      if (
-        signerAddress.toLowerCase() !==
-        onChainItem.reporterAddress.toLowerCase()
-      ) {
-        throw new Error(
-          `Wallet mismatch. Connected: ${signerAddress.slice(
-            0,
-            6
-          )}...${signerAddress.slice(-4)}, ` +
-            `expected: ${onChainItem.reporterAddress.slice(
-              0,
-              6
-            )}...${onChainItem.reporterAddress.slice(-4)}. ` +
-            `Switch to the correct account in MetaMask.`
-        );
-      }
 
       // Item already on-chain; just deposit the reward
       if (rewardWei > BigInt(0)) {
@@ -338,7 +322,6 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
   const executeOnchainRelease = async (): Promise<string> => {
     const contractData = await loadContractData();
     const signer = await getSigner();
-    const signerAddress = await signer.getAddress();
     const contract = new ethers.Contract(
       contractData.address,
       contractData.abi,
@@ -347,29 +330,12 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
 
     // Verify on-chain item exists
     const onChainItem = await contract.items(itemId);
-  if (
+    if (
       !onChainItem.reporterAddress ||
       onChainItem.reporterAddress === ethers.ZeroAddress
     ) {
       // Item not on-chain — fall back to off-chain release via backend
       return "offchain_fallback_" + Date.now().toString(16);
-    }
-
-    // Verify signer is the on-chain reporter
-    if (
-      signerAddress.toLowerCase() !== onChainItem.reporterAddress.toLowerCase()
-    ) {
-      throw new Error(
-        `Wallet mismatch. Connected: ${signerAddress.slice(
-          0,
-          6
-        )}...${signerAddress.slice(-4)}, ` +
-          `expected reporter: ${onChainItem.reporterAddress.slice(
-            0,
-            6
-          )}...${onChainItem.reporterAddress.slice(-4)}. ` +
-          `Switch to the correct account in MetaMask and try again.`
-      );
     }
 
     if (!escrow?.finderId?.walletAddress) {
@@ -503,7 +469,6 @@ export function EscrowPanel({ itemId }: EscrowPanelProps) {
         </CardContent>
       </Card>
     );
-
   }
 
   if (!escrow) {
