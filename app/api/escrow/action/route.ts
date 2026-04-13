@@ -204,6 +204,17 @@ export async function POST(request: NextRequest) {
     let escrow = await EscrowCase.findOne({ itemId: item._id }).sort({
       createdAt: -1,
     });
+    if (!escrow && item.matchedItemId) {
+      escrow = await EscrowCase.findOne({ itemId: item.matchedItemId }).sort({
+        createdAt: -1,
+      });
+    }
+    // If no escrow found, check if the matched item has one
+    if (!escrow && item.matchedItemId) {
+      escrow = await EscrowCase.findOne({ itemId: item.matchedItemId }).sort({
+        createdAt: -1,
+      });
+    }
 
     // ── CREATE ESCROW ──────────────────────────────────────────────────────────
     if (action === "create_escrow") {

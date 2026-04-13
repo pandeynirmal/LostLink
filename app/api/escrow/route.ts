@@ -69,7 +69,12 @@ export async function GET(request: NextRequest) {
     }
     const isAdmin = me?.role === "admin";
     const isOwner = escrow.ownerId?._id?.toString?.() === userId;
-    const isFinder = escrow.finderId?._id?.toString?.() === userId;
+    const viewedItem = await Item.findById(itemId).select("userId").lean();
+    const isFinder =
+      escrow.finderId?._id?.toString?.() === userId ||
+      (viewedItem &&
+        (viewedItem as any).userId?.toString() === userId &&
+        !isOwner);
 
     const now = Date.now();
     const autoReleaseAvailable =
