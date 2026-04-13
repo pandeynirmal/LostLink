@@ -78,31 +78,60 @@ async function executeEscrowRelease(escrow: any, providedTxHash?: string) {
 
   let pseudoTxHash = providedTxHash || "offchain_" + Date.now().toString(16);
   const isOffchain = freshEscrow.paymentMethod !== "onchain";
+
   if (
     !item.isClaimed &&
     item.status !== "resolved" &&
     !freshEscrow.finderFundReceived
   ) {
     if (!isOffchain) {
-      // Server wallet calls verifyAndPay on-chain — real Sepolia tx
       const finderWallet = finder.walletAddress;
+      let onchainSuccess = false;
       if (finderWallet) {
-        const blockchainResult = await verifyAndPay(
-          item._id.toString(),
-          finderWallet,
-          ""
-        );
-        if (blockchainResult?.txHash) {
-          pseudoTxHash = blockchainResult.txHash;
+        try {
+          const blockchainResult = await verifyAndPay(
+            item._id.toString(),
+            finderWallet,
+            ""
+          );
+          if (blockchainResult?.txHash) {
+            pseudoTxHash = blockchainResult.txHash;
+            onchainSuccess = true;
+          }
+        } catch (e) {
+          console.warn(
+            "On-chain verifyAndPay failed, falling back to project wallet offchain transfer:",
+            e
+          );
         }
       }
+      if (!onchainSuccess) {
+        pseudoTxHash = "project_wallet_" + Date.now().toString(16);
+        await User.updateOne(
+          { _id: finder._id },
+          { $inc: { offchainBalance: amount } }
+        );
+        await WalletTransaction.create({
+          fromUserId: freshEscrow.ownerId,
+          toUserId: finder._id,
+          itemId: item._id,
+          contactRequestId: freshEscrow.contactRequestId || undefined,
+          paymentMethod: "onchain_fallback",
+          fromAddress: "project_wallet",
+          toAddress: finder.walletAddress || "internal",
+          amountEth: amount,
+          txHash: pseudoTxHash,
+          network: "sepolia",
+          status: "completed",
+        });
+      }
     }
+
     if (isOffchain) {
       await User.updateOne(
         { _id: finder._id },
         { $inc: { offchainBalance: amount } }
       );
-
       await WalletTransaction.create({
         fromUserId: freshEscrow.ownerId,
         toUserId: finder._id,
@@ -201,15 +230,10 @@ export async function POST(request: NextRequest) {
     const isAdmin = me?.role === "admin";
     const isOwner = item.userId?.toString() === userId;
 
+    // Look up escrow by item ID, then by matched item ID (for finder's item view)
     let escrow = await EscrowCase.findOne({ itemId: item._id }).sort({
       createdAt: -1,
     });
-    if (!escrow && item.matchedItemId) {
-      escrow = await EscrowCase.findOne({ itemId: item.matchedItemId }).sort({
-        createdAt: -1,
-      });
-    }
-    // If no escrow found, check if the matched item has one
     if (!escrow && item.matchedItemId) {
       escrow = await EscrowCase.findOne({ itemId: item.matchedItemId }).sort({
         createdAt: -1,
@@ -225,15 +249,12 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // If an active escrow already exists, return it (prevent duplicates)
       if (escrow && !["released", "refunded"].includes(escrow.state)) {
-        // If it's missing a finder, try to assign one now from approved contact requests
         if (!escrow.finderId) {
           const linkedRequest = await ContactRequest.findOne({
             itemId: item._id,
             status: "approved",
           }).sort({ createdAt: -1 });
-
           if (linkedRequest?.requesterId) {
             escrow.finderId = linkedRequest.requesterId;
             escrow.contactRequestId = linkedRequest._id;
@@ -294,7 +315,6 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Auto-assign finder from approved contact request if available
       const linkedRequest = await ContactRequest.findOne({
         itemId: item._id,
         status: "approved",
@@ -344,9 +364,17 @@ export async function POST(request: NextRequest) {
     const finderUserId = escrow.finderId?.toString() || "";
     const isFinder = finderUserId === userId;
 
+    // Also treat user as finder if they own the matched item (finder viewing via their found item page)
+    const viewedItem = await Item.findById(itemId).select("userId").lean();
+    const isFinderByItem =
+      !isOwner &&
+      viewedItem &&
+      (viewedItem as any).userId?.toString() === userId;
+    const effectiveIsFinder = isFinder || !!isFinderByItem;
+
     // ── ALLOW CHAT ─────────────────────────────────────────────────────────────
     if (action === "allow_chat") {
-      if (!isOwner && !isFinder && !isAdmin) {
+      if (!isOwner && !effectiveIsFinder && !isAdmin) {
         return NextResponse.json({ error: "Not allowed" }, { status: 403 });
       }
       if (!escrow.finderId) {
@@ -463,7 +491,7 @@ export async function POST(request: NextRequest) {
 
     // ── INITIATE DELIVERY ──────────────────────────────────────────────────────
     if (action === "initiate_delivery") {
-      if (!isFinder && !isAdmin) {
+      if (!effectiveIsFinder && !isAdmin) {
         return NextResponse.json(
           { error: "Only finder/admin can initiate delivery." },
           { status: 403 }
@@ -502,7 +530,7 @@ export async function POST(request: NextRequest) {
 
     // ── MARK ITEM DELIVERED ────────────────────────────────────────────────────
     if (action === "mark_item_delivered") {
-      if (!isFinder && !isAdmin) {
+      if (!effectiveIsFinder && !isAdmin) {
         return NextResponse.json(
           { error: "Only finder/admin can mark item delivered." },
           { status: 403 }
@@ -530,7 +558,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    if (!isOwner && !isFinder && !isAdmin) {
+    if (!isOwner && !effectiveIsFinder && !isAdmin) {
       return NextResponse.json(
         { error: "Not allowed for this escrow." },
         { status: 403 }
@@ -570,7 +598,7 @@ export async function POST(request: NextRequest) {
 
     // ── CONFIRM FUND RECEIVED ──────────────────────────────────────────────────
     if (action === "confirm_fund_received") {
-      if (!isFinder && !isAdmin) {
+      if (!effectiveIsFinder && !isAdmin) {
         return NextResponse.json(
           { error: "Only finder/admin can confirm fund received." },
           { status: 403 }
@@ -593,14 +621,13 @@ export async function POST(request: NextRequest) {
       if (isOwner && !escrow.ownerReleaseApproved) {
         escrow.ownerReleaseApproved = true;
         escrow.ownerReleaseApprovedAt = now;
-        // Owner approving release implicitly confirms item received
         if (!escrow.ownerItemReceived) {
           escrow.ownerItemReceived = true;
           escrow.ownerItemReceivedAt = now;
           setAutoReleaseTimer(escrow);
         }
       }
-      if (isFinder && !escrow.finderReleaseApproved) {
+      if (effectiveIsFinder && !escrow.finderReleaseApproved) {
         escrow.finderReleaseApproved = true;
         escrow.finderReleaseApprovedAt = now;
       }
@@ -617,7 +644,7 @@ export async function POST(request: NextRequest) {
 
       const bothPartiesAgreed =
         escrow.ownerReleaseApproved && escrow.finderReleaseApproved;
-      const multiSigReady = releaseVotes >= 2; // removed ownerItemReceived requirement
+      const multiSigReady = releaseVotes >= 2;
 
       if ((bothPartiesAgreed || multiSigReady) && escrow.state !== "released") {
         const txHash = await executeEscrowRelease(escrow, releaseTxHash);
@@ -686,7 +713,7 @@ export async function POST(request: NextRequest) {
 
     // ── RAISE DISPUTE ──────────────────────────────────────────────────────────
     if (action === "raise_dispute") {
-      if (!isOwner && !isFinder && !isAdmin) {
+      if (!isOwner && !effectiveIsFinder && !isAdmin) {
         return NextResponse.json(
           { error: "Only owner, finder, or admin can raise dispute." },
           { status: 403 }
