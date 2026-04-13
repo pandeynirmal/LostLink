@@ -5,7 +5,7 @@ export interface IWalletTransaction extends Document {
   toUserId: mongoose.Types.ObjectId;
   itemId?: mongoose.Types.ObjectId;
   contactRequestId?: mongoose.Types.ObjectId;
-  paymentMethod: "onchain" | "razorpay" | "metamask" | "offchain";
+  paymentMethod: "onchain" | "razorpay" | "metamask" | "offchain" | "onchain_fallback";
   fromAddress: string;
   toAddress: string;
   amountEth: number;
@@ -39,7 +39,7 @@ const WalletTransactionSchema = new Schema<IWalletTransaction>({
   },
   paymentMethod: {
     type: String,
-    enum: ["onchain", "razorpay", "metamask", "offchain"],
+    enum: ["onchain", "razorpay", "metamask", "offchain", "onchain_fallback"],
     required: true,
     default: "onchain",
   },
@@ -93,3 +93,5 @@ const WalletTransaction: Model<IWalletTransaction> =
   mongoose.model<IWalletTransaction>("WalletTransaction", WalletTransactionSchema);
 
 export default WalletTransaction;
+
+
