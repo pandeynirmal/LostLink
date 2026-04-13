@@ -386,12 +386,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       itemId: newItem._id,
+      imageUrl: newItem.imageUrl,
       detected_item: detectedItem,
       match_score: matchScorePercent,
       status,
       tx_hash: blockchainData?.txHash || `pending-${newItem._id}`,
       blockchain: blockchainData || null,
-      matchFound: bestMatch !== null && highestScore >= 0.2,
+      matchFound: bestMatch !== null && highestScore >= 0.60,
       matchDetails: bestMatch
         ? {
             matchedItemId: (bestMatch as any)._id,
