@@ -5,6 +5,8 @@ import { cookies } from "next/headers";
 import { verifyToken } from "@/lib/auth";
 import { v2 as cloudinary } from "cloudinary";
 
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -392,7 +394,7 @@ export async function POST(request: NextRequest) {
       status,
       tx_hash: blockchainData?.txHash || `pending-${newItem._id}`,
       blockchain: blockchainData || null,
-      matchFound: bestMatch !== null && highestScore >= 0.60,
+      matchFound: bestMatch !== null && highestScore >= 0.6,
       matchDetails: bestMatch
         ? {
             matchedItemId: (bestMatch as any)._id,
