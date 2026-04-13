@@ -241,15 +241,8 @@ function UploadPageContent() {
                 contactPhone,
                 rewardPaymentMethod,
               ];
-              setDuplicateWarning({
-                error: result.error,
-                existingItemId: result.existingItemId,
-                existingItemType: result.existingItemType || "unknown",
-                existingDescription:
-                  result.existingDescription || "Similar item",
-                matchScore: result.matchScore || 0,
-              });
-              setIsLoading(false);
+              bypassDuplicateRef.current = true;
+              await handleSubmit(...(pendingSubmitRef.current || []));
               return;
             }
             throw new Error(result.error || "Upload failed");
