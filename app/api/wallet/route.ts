@@ -5,7 +5,11 @@ import connectDB from "@/lib/db";
 import { verifyToken } from "@/lib/auth";
 import User from "@/lib/models/User";
 import WalletTransaction from "@/lib/models/WalletTransaction";
-import { ensureUserWallet, getWalletBalance, getWalletNetwork } from "@/lib/wallet";
+import {
+  ensureUserWallet,
+  getWalletBalance,
+  getWalletNetwork,
+} from "@/lib/wallet";
 import { getUserReputation } from "@/lib/blockchain";
 import {
   getBlockchainRpcUrl,
@@ -57,13 +61,12 @@ export async function GET() {
     const isValidTxHash = (hash: string | undefined) =>
       typeof hash === "string" && /^0x[a-fA-F0-9]{64}$/.test(hash);
 
-    const provider = new ethers.JsonRpcProvider(
-      getBlockchainRpcUrl()
-    );
+    const provider = new ethers.JsonRpcProvider(getBlockchainRpcUrl());
     const txAvailabilityCache = new Map<string, boolean>();
     const checkTxExists = async (hash: string | undefined) => {
       if (!isValidTxHash(hash)) return false;
-      if (txAvailabilityCache.has(hash!)) return txAvailabilityCache.get(hash!) as boolean;
+      if (txAvailabilityCache.has(hash!))
+        return txAvailabilityCache.get(hash!) as boolean;
       try {
         const [txData, receiptData] = await Promise.all([
           provider.getTransaction(hash!),
@@ -78,52 +81,65 @@ export async function GET() {
       }
     };
 
-    const walletTransactions = await Promise.all(transactions.map(async (tx: any) => {
-      const txHash = tx.txHash || "";
-      const anchorTxHash = tx.anchorTxHash || "";
-      const settlementProofTxHash = tx.settlementProofTxHash || "";
+    const walletTransactions = await Promise.all(
+      transactions.map(async (tx: any) => {
+        const txHash = tx.txHash || "";
+        const anchorTxHash = tx.anchorTxHash || "";
+        const settlementProofTxHash = tx.settlementProofTxHash || "";
+        const isOffchainTx =
+          !txHash.startsWith("0x") ||
+          tx.paymentMethod === "offchain" ||
+          tx.paymentMethod === "onchain_fallback";
+        const [
+          txAvailableOnCurrentRpc,
+          anchorTxAvailableOnCurrentRpc,
+          settlementProofTxAvailableOnCurrentRpc,
+        ] = isOffchainTx
+          ? [false, false, false]
+          : await Promise.all([
+              checkTxExists(txHash),
+              checkTxExists(anchorTxHash),
+              checkTxExists(settlementProofTxHash),
+            ]);
 
-      const [txAvailableOnCurrentRpc, anchorTxAvailableOnCurrentRpc, settlementProofTxAvailableOnCurrentRpc] =
-        await Promise.all([
-          checkTxExists(txHash),
-          checkTxExists(anchorTxHash),
-          checkTxExists(settlementProofTxHash),
-        ]);
-
-      return {
-      id: tx._id,
-      txHash,
-      paymentMethod: tx.paymentMethod,
-      anchorTxHash,
-      settlementProofTxHash,
-      amountEth: tx.amountEth,
-      status: tx.status,
-      network: tx.network,
-      txAvailableOnCurrentRpc,
-      anchorTxAvailableOnCurrentRpc,
-      settlementProofTxAvailableOnCurrentRpc,
-      explorerTxUrl: getExplorerTxUrl(tx.network, txHash),
-      anchorExplorerTxUrl: anchorTxHash
-        ? getExplorerTxUrl(tx.network, anchorTxHash)
-        : "",
-      settlementProofExplorerTxUrl: settlementProofTxHash
-        ? getExplorerTxUrl(tx.network, settlementProofTxHash)
-        : "",
-      createdAt: tx.createdAt,
-      itemDescription: tx.itemId?.description || "",
-      direction: tx.fromUserId?._id?.toString() === user._id.toString() ? "sent" : "received",
-      from: {
-        fullName: tx.fromUserId?.fullName || "Unknown",
-        email: tx.fromUserId?.email || "",
-        address: tx.fromAddress,
-      },
-      to: {
-        fullName: tx.toUserId?.fullName || "Unknown",
-        email: tx.toUserId?.email || "",
-        address: tx.toAddress,
-      },
-      };
-    }));
+        return {
+          id: tx._id,
+          txHash,
+          paymentMethod: tx.paymentMethod,
+          anchorTxHash,
+          settlementProofTxHash,
+          amountEth: tx.amountEth,
+          status: tx.status,
+          network: tx.network,
+          txAvailableOnCurrentRpc,
+          anchorTxAvailableOnCurrentRpc,
+          settlementProofTxAvailableOnCurrentRpc,
+          explorerTxUrl: getExplorerTxUrl(tx.network, txHash),
+          anchorExplorerTxUrl: anchorTxHash
+            ? getExplorerTxUrl(tx.network, anchorTxHash)
+            : "",
+          settlementProofExplorerTxUrl: settlementProofTxHash
+            ? getExplorerTxUrl(tx.network, settlementProofTxHash)
+            : "",
+          createdAt: tx.createdAt,
+          itemDescription: tx.itemId?.description || "",
+          direction:
+            tx.fromUserId?._id?.toString() === user._id.toString()
+              ? "sent"
+              : "received",
+          from: {
+            fullName: tx.fromUserId?.fullName || "Unknown",
+            email: tx.fromUserId?.email || "",
+            address: tx.fromAddress,
+          },
+          to: {
+            fullName: tx.toUserId?.fullName || "Unknown",
+            email: tx.toUserId?.email || "",
+            address: tx.toAddress,
+          },
+        };
+      })
+    );
 
     const userIdStr = user._id.toString();
     let totalSentEth = 0;
@@ -137,7 +153,8 @@ export async function GET() {
       const amount = Number(tx.amountEth || 0);
       const isSender = tx.fromUserId?._id?.toString() === userIdStr;
       const isReceiver = tx.toUserId?._id?.toString() === userIdStr;
-      const isOnchain = tx.paymentMethod === "onchain" || tx.paymentMethod === "metamask";
+      const isOnchain =
+        tx.paymentMethod === "onchain" || tx.paymentMethod === "metamask";
 
       if (isSender) {
         totalSentEth += amount;
@@ -160,7 +177,9 @@ export async function GET() {
           offchainBalance: Number(user.offchainBalance || 0),
           reputation: reputation || 0,
           network,
-          verificationMode: isLocalRpcConfigured() ? "local-temporary" : "persistent",
+          verificationMode: isLocalRpcConfigured()
+            ? "local-temporary"
+            : "persistent",
         },
         summary: {
           totalSentEth,
