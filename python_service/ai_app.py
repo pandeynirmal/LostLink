@@ -1,4 +1,3 @@
-import os
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -7,7 +6,18 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
 import io
 import string
+import tensorflow as tf
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
+_mobilenet = None
+
+def get_mobilenet():
+    global _mobilenet
+    if _mobilenet is None:
+        base = MobileNetV2(weights='imagenet', include_top=False, pooling='avg')
+        _mobilenet = base
+    return _mobilenet
 app = Flask(__name__)
 CORS(app)
 
@@ -41,49 +51,15 @@ def get_text_embedding(text):
 
 
 def get_image_embedding(image):
-    """
-    Lightweight image embedding using color histograms + edge features.
-    No heavy models needed - works on free tier.
-    """
-    # Resize to standard size
-    image = image.resize((224, 224))
-    img_array = np.array(image.convert('RGB'))
-
-    # Color histogram per channel (64 bins each = 192 features)
-    hist_r = np.histogram(img_array[:, :, 0], bins=64, range=(0, 256))[0]
-    hist_g = np.histogram(img_array[:, :, 1], bins=64, range=(0, 256))[0]
-    hist_b = np.histogram(img_array[:, :, 2], bins=64, range=(0, 256))[0]
-
-    # Grayscale for texture features
-    gray = np.mean(img_array, axis=2)
-
-    # Simple edge detection using gradient
-    grad_x = np.abs(np.diff(gray, axis=1)).flatten()
-    grad_y = np.abs(np.diff(gray, axis=0)).flatten()
-    edge_hist = np.histogram(
-        np.concatenate([grad_x, grad_y]), bins=64, range=(0, 256)
-    )[0]
-
-    # Spatial color grid (divide image into 4 quadrants, get mean RGB)
-    h, w = img_array.shape[:2]
-    spatial = []
-    for i in range(2):
-        for j in range(2):
-            quad = img_array[i*h//2:(i+1)*h//2, j*w//2:(j+1)*w//2]
-            spatial.extend(quad.mean(axis=(0, 1)).tolist())
-
-    # Combine all features
-    features = np.concatenate([
-        hist_r, hist_g, hist_b,
-        edge_hist,
-        np.array(spatial)
-    ]).astype(np.float32)
-
-    # Normalize
+    model = get_mobilenet()
+    image = image.resize((224, 224)).convert('RGB')
+    img_array = tf.keras.preprocessing.image.img_to_array(image)
+    img_array = np.expand_dims(img_array, axis=0)
+    img_array = preprocess_input(img_array)
+    features = model.predict(img_array, verbose=0).flatten()
     norm = np.linalg.norm(features)
     if norm > 0:
         features = features / norm
-
     return features
 
 
