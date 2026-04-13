@@ -27,7 +27,7 @@ type WalletData = {
 type WalletTx = {
   id: string;
   txHash: string;
-  paymentMethod: "onchain" | "razorpay" | "metamask" | "offchain";
+  paymentMethod: "onchain" | "razorpay" | "metamask" | "offchain" | "onchain_fallback";
   anchorTxHash?: string;
   settlementProofTxHash?: string;
   txAvailableOnCurrentRpc?: boolean;
@@ -113,7 +113,6 @@ export function WalletPanel() {
     if (typeof window === "undefined") return;
     setHasMetaMask(Boolean(window.ethereum));
     void refreshMetaMaskState();
-
     const tick = () => {
       if (document.visibilityState !== "visible") return;
       void fetchWallet();
@@ -177,9 +176,7 @@ export function WalletPanel() {
     setMetaMaskError("");
     try {
       if (!window.ethereum) {
-        setMetaMaskError(
-          "MetaMask not detected. Please install the MetaMask browser extension."
-        );
+        setMetaMaskError("MetaMask not detected. Please install the MetaMask browser extension.");
         return;
       }
       const provider = new ethers.BrowserProvider(window.ethereum);
@@ -189,8 +186,6 @@ export function WalletPanel() {
         return;
       }
       await refreshMetaMaskState(accounts[0]);
-
-      // Save wallet address to backend so on-chain escrow release works
       try {
         await fetch("/api/wallet", {
           method: "PATCH",
@@ -285,8 +280,7 @@ export function WalletPanel() {
       setFundMessage(`Loaded ${amount} ETH via MetaMask. Tx: ${tx.hash}`);
       await Promise.all([fetchWallet(), refreshMetaMaskState(fromAddress)]);
     } catch (error) {
-      const message =
-        (error as { message?: string })?.message || "MetaMask funding failed.";
+      const message = (error as { message?: string })?.message || "MetaMask funding failed.";
       if (message.toLowerCase().includes("insufficient funds")) {
         setFundMessage("MetaMask balance is not enough for amount + gas.");
       } else {
@@ -360,9 +354,7 @@ export function WalletPanel() {
             });
             const verifyData = await verifyRes.json();
             if (!verifyRes.ok || !verifyData.success) {
-              setFundMessage(
-                verifyData.error || "Razorpay payment verification failed."
-              );
+              setFundMessage(verifyData.error || "Razorpay payment verification failed.");
               return;
             }
             setFundMessage(verifyData.message || "Top-up successful.");
@@ -385,6 +377,16 @@ export function WalletPanel() {
     } catch {
       setFundMessage("Razorpay top-up failed.");
       setToppingUpRazorpay(false);
+    }
+  };
+
+  const getMethodLabel = (method: string) => {
+    switch (method) {
+      case "onchain": return "On-chain (Smart Contract)";
+      case "offchain": return "Off-chain escrow release";
+      case "onchain_fallback": return "Off-chain fallback (on-chain unavailable)";
+      case "metamask": return "MetaMask on-chain transfer";
+      default: return "Razorpay + blockchain anchor";
     }
   };
 
@@ -423,13 +425,13 @@ export function WalletPanel() {
                 )}
                 <div className="p-3 bg-white dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-700 mt-2">
                   <p className="text-neutral-500 dark:text-neutral-300 text-xs uppercase tracking-wide mb-1">
-                    On‑chain Custodial Balance
+                    On-chain Custodial Balance
                   </p>
                   <p className="text-2xl font-semibold text-black dark:text-white">
                     {(wallet?.balanceEth || "0.0000").slice(0, 6)} ETH
                   </p>
                   <p className="text-neutral-400 text-xs mt-1 italic">
-                    This is auto‑granted gas money, not your system‑loaded funds.
+                    This is auto-granted gas money, not your system-loaded funds.
                   </p>
                 </div>
                 <p>
@@ -473,7 +475,7 @@ export function WalletPanel() {
                 </div>
                 <div className="space-y-2 border border-neutral-200 dark:border-neutral-700 rounded p-3 bg-white dark:bg-neutral-800">
                   <p className="text-neutral-800 dark:text-neutral-200 font-medium">
-                    Mobile Top‑up (Razorpay Sandbox)
+                    Mobile Top-up (Razorpay Sandbox)
                   </p>
                   <div className="flex gap-2">
                     <Input
@@ -499,7 +501,7 @@ export function WalletPanel() {
                 </div>
                 {!hasMetaMask && (
                   <p className="text-xs text-neutral-400">
-                    MetaMask is optional. You can still use "Load Funds (System)" and normal app flows.
+                    MetaMask is optional. You can still use &quot;Load Funds (System)&quot; and normal app flows.
                   </p>
                 )}
                 {fundMessage && (
@@ -559,12 +561,11 @@ export function WalletPanel() {
                     <p>
                       <strong>Network:</strong> {metaMaskNetwork}
                     </p>
-                    {metaMaskNetwork &&
-                      !metaMaskNetwork.toLowerCase().includes("sepolia") && (
-                        <p className="text-amber-500 text-xs">
-                          ⚠️ Switch MetaMask to Sepolia testnet for on-chain features to work.
-                        </p>
-                      )}
+                    {metaMaskNetwork && !metaMaskNetwork.toLowerCase().includes("sepolia") && (
+                      <p className="text-amber-500 text-xs">
+                        ⚠️ Switch MetaMask to Sepolia testnet for on-chain features to work.
+                      </p>
+                    )}
                   </>
                 )}
               </CardContent>
@@ -586,14 +587,11 @@ export function WalletPanel() {
                     {(wallet?.offchainBalance ?? 0).toFixed(4)} ETH
                   </p>
                   <p className="text-neutral-400 text-xs mt-1">
-                    Funds added via "Load Funds (System)" appear here.
+                    Funds added via &quot;Load Funds (System)&quot; appear here.
                   </p>
                 </div>
                 <div className="p-3 bg-indigo-50 dark:bg-indigo-950/30 rounded-lg border border-indigo-100 dark:border-indigo-900/50 mb-3">
-                  <p className="text-indigo-600 dark:text-indigo-400 text-xs uppercase tracking-wide font-semibold mb-1 flex items-center gap-1">
-                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                    </svg>
+                  <p className="text-indigo-600 dark:text-indigo-400 text-xs uppercase tracking-wide font-semibold mb-1">
                     On-chain Reputation
                   </p>
                   <p className="text-2xl font-bold text-indigo-700 dark:text-indigo-300">
@@ -652,39 +650,23 @@ export function WalletPanel() {
                     className="rounded border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black/60 p-3 text-sm space-y-1"
                   >
                     <p>
-                      <strong>Method:</strong>{" "}
-                      {tx.paymentMethod === "onchain"
-                        ? "On-chain (Smart Contract)"
-                        : tx.paymentMethod === "offchain"
-                        ? "Off-chain escrow release"
-                        : tx.paymentMethod === "metamask"
-                        ? "MetaMask on-chain transfer"
-                        : "Razorpay + blockchain anchor"}
+                      <strong>Method:</strong> {getMethodLabel(tx.paymentMethod)}
                     </p>
                     <p>
-                      <strong>
-                        {tx.direction === "sent" ? "Sent" : "Received"}:
-                      </strong>{" "}
+                      <strong>{tx.direction === "sent" ? "Sent" : "Received"}:</strong>{" "}
                       {tx.amountEth} ETH
                     </p>
-
-                    {/* Main tx hash */}
                     <p>
                       <strong>
-                        {tx.paymentMethod === "razorpay"
-                          ? "External Payment ID"
-                          : "Tx Hash"}
-                        :
+                        {tx.paymentMethod === "razorpay" ? "External Payment ID" : "Tx Hash"}:
                       </strong>{" "}
                       <span className="font-mono text-xs break-all">{tx.txHash}</span>
-                      {tx.paymentMethod === "offchain" && (
+                      {(tx.paymentMethod === "offchain" || tx.paymentMethod === "onchain_fallback") && (
                         <span className="text-neutral-500 dark:text-neutral-400 text-xs ml-2">
-                          (Off‑chain transfer)
+                          (Off-chain transfer)
                         </span>
                       )}
                     </p>
-
-                    {/* Etherscan link for on-chain hashes */}
                     {(tx.paymentMethod === "onchain" || tx.paymentMethod === "metamask") &&
                       isValidTxHash(tx.txHash) && (
                         <p>
@@ -698,14 +680,6 @@ export function WalletPanel() {
                           </a>
                         </p>
                       )}
-                    {(tx.paymentMethod === "onchain" || tx.paymentMethod === "metamask") &&
-                      !isValidTxHash(tx.txHash) && (
-                        <p className="text-red-500 dark:text-red-300 text-xs">
-                          ⚠ Transaction hash cannot be verified (corrupted or incomplete)
-                        </p>
-                      )}
-
-                    {/* Anchor tx (Razorpay) */}
                     {tx.paymentMethod === "razorpay" && tx.anchorTxHash && (
                       <>
                         <p>
@@ -726,8 +700,6 @@ export function WalletPanel() {
                         )}
                       </>
                     )}
-
-                    {/* Settlement proof */}
                     {tx.settlementProofTxHash && (
                       <>
                         <p>
@@ -737,10 +709,7 @@ export function WalletPanel() {
                         {isValidTxHash(tx.settlementProofTxHash) && (
                           <p>
                             <a
-                              href={
-                                tx.settlementProofExplorerTxUrl ||
-                                etherscanUrl(tx.settlementProofTxHash)
-                              }
+                              href={tx.settlementProofExplorerTxUrl || etherscanUrl(tx.settlementProofTxHash)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-violet-600 dark:text-violet-300 underline text-xs"
@@ -751,7 +720,6 @@ export function WalletPanel() {
                         )}
                       </>
                     )}
-
                     <p>
                       <strong>From:</strong> {tx.from.fullName} ({tx.from.address})
                     </p>
@@ -764,8 +732,7 @@ export function WalletPanel() {
                       </p>
                     )}
                     <p>
-                      <strong>Date:</strong>{" "}
-                      {new Date(tx.createdAt).toLocaleString()}
+                      <strong>Date:</strong> {new Date(tx.createdAt).toLocaleString()}
                     </p>
                   </div>
                 ))}
