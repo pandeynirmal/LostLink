@@ -314,7 +314,7 @@ export async function POST(request: NextRequest) {
           }
 
           // Lowered threshold to 0.3 for lightweight AI
-          if (score > 0.6 && score > highestScore) {
+          if (score > 0.70 && score > highestScore) {
             highestScore = score;
             bestMatch = candidateItem;
           }

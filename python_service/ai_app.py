@@ -163,9 +163,9 @@ def match_combined():
         return jsonify({"error": "Missing required embeddings"}), 400
 
     try:
-        weights = data.get('weights', {'image': 0.6, 'text': 0.4})
-        image_weight = weights.get('image', 0.6)
-        text_weight = weights.get('text', 0.4)
+        weights = data.get('weights', {'image': 0.3, 'text': 0.7})
+        image_weight = weights.get('image', 0.3)
+        text_weight = weights.get('text', 0.7)
         total_weight = image_weight + text_weight
         image_weight /= total_weight
         text_weight /= total_weight
