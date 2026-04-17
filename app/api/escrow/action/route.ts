@@ -269,7 +269,13 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      const amount = Number(item.rewardAmount || 0);
+      let amount = Number(item.rewardAmount || 0);
+      if ((!Number.isFinite(amount) || amount <= 0) && item.matchedItemId) {
+        const matchedItem = await Item.findById(item.matchedItemId)
+          .select("rewardAmount")
+          .lean();
+        amount = Number((matchedItem as any)?.rewardAmount || 0);
+      }
       if (!Number.isFinite(amount) || amount <= 0) {
         return NextResponse.json(
           { error: "Item must have a reward amount > 0 to create escrow." },
